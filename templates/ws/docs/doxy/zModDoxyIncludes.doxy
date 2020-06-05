@@ -1,0 +1,43 @@
+/*
+ * Example use of documentation include blocks (see \copydoc, etc) to be used
+ * in doxygen documentation.
+ */
+
+/*! \file */
+
+/*!
+ * \defgroup doxy_includes Doxygen Includes
+ * Useful doxygen documentation blocks that can be included into other
+ * documentation with the <b>\\copydoc</b> command.
+ * \{
+ */
+
+/*!
+ * \ingroup doxy_includes
+ * \defgroup doc_param_ecode doc_param_ecode
+ * \{
+One of \ref @ID_PKG@_ecodes  "@PKG_NAME@ Error Codes".
+ * \}
+ */
+
+/*!
+ * \ingroup doxy_includes
+ * \defgroup doc_return_ecode doc_return_ecode
+ * \{
+On error, the appropriate \h_lt 0 negated
+\ref @ID_PKG@_ecodes "@PKG_NAME@ Error Code" is returned.
+ * \}
+ */
+
+/*!
+ * \ingroup doxy_includes
+ * \defgroup doc_return_std doc_return_std
+ * \{
+\return
+On success, \ref @ID_PKG@_OK is returned.\n
+On error, the appropriate \h_lt 0
+negated \ref @ID_PKG@_ecodes "@PKG_NAME@ Error Code" is returned.
+ * \}
+ */
+
+/*! \} end of doxy_includes */

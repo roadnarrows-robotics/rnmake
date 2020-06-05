@@ -1,0 +1,1294 @@
+################################################################################
+#
+# Rules.mk
+#
+ifdef RNMAKE_DOXY
+/*! 
+\file 
+
+\brief Master file for defining rules for make targets, variables, and macros.
+
+Include this file in each local make file (usually near the bottom).
+
+\pkgsynopsis RN Make System
+\pkgfile{Rules.mk}
+\pkgauthor{Robin Knight,robin.knight@roadnarrows.com}
+\pkgcopyright{2005-2018,RoadNarrows LLC,http://www.roadnarrows.com}
+
+\LegalBegin
+Copyright (c) 2005-2020 RoadNarrows LLC
+
+Licensed under the MIT License (the "License").
+
+You may not use this file except in compliance with the License. You may
+obtain a copy of the License at:
+
+https://opensource.org/licenses/MIT
+
+The software is provided "AS IS", without warranty of any kind, express or
+implied, including but not limited to the warranties of merchantability,
+fitness for a particular purpose and noninfringement. in no event shall the
+authors or copyright holders be liable for any claim, damages or other
+liability, whether in an action of contract, tort or otherwise, arising from,
+out of or in connection with the software or the use or other dealings in the
+software.
+\LegalEnd
+
+\cond RNMAKE_DOXY
+ */
+endif
+#
+################################################################################
+
+export _RULES_MK = 1
+
+#------------------------------------------------------------------------------
+# Prelims
+
+#.EXPORT_ALL_VARIABLES: nope
+
+# This makefile is last in the list (must call before any includes).
+RNMAKE_ROOT := $(realpath $(dir $(lastword $(MAKEFILE_LIST))))
+
+export RNMAKE_ROOT
+
+#$(info DBG: $(RNMAKE_ROOT)/Rules.mk)
+
+# The version of these makefile rules.
+RNMAKE_RULES_VER_MAJOR   := 4
+RNMAKE_RULES_VER_MINOR   := 0
+RNMAKE_RULES_VER_RELEASE := 0
+
+# default goal
+.DEFAULT_GOAL := all
+
+# List of command-line goals.
+GOAL_LIST = $(MAKECMDGOALS)
+
+# Add default rule if empty.
+GOAL_LIST ?= $(.DEFAULT_GOAL)
+
+# Save the first and last goals.
+FIRST_GOAL = $(firstword $(GOAL_LIST))
+LAST_GOAL  = $(lastword $(GOAL_LIST))
+
+# List of goals with subdirectory traversals (determined below).
+GOALS_WITH_SUBDIRS = 
+
+# Recursive make directory stack.
+export DIR_STACK += $(CURDIR)
+
+# Recursive make call depth. The top level does not equate to top makefile.
+ifeq ($(MAKELEVEL),0)
+  MAKE_TOP_LEVEL = y
+else
+  undefine MAKE_TOP_LEVEL
+endif
+
+# Must be defined in including makefile.
+ifndef RNMAKE_PKG_ROOT
+  $(error 'RNMAKE_PKG_ROOT': Not defined in including Makefile)
+endif
+
+# Package root absolute path
+RNMAKE_PKG_ROOT := $(realpath $(RNMAKE_PKG_ROOT))
+
+# The top make file exists one at the package root directory.
+ifeq ($(RNMAKE_PKG_ROOT),$(realpath $(CURDIR)))
+  RNMAKE_TOP_MAKEFILE = y
+else
+  undefine RNMAKE_TOP_MAKEFILE
+endif
+
+MSG_ROOT_ONLY := is a package root make target only
+
+#------------------------------------------------------------------------------
+# Environment (local package env.mk or Env.mk)
+#
+# Parse rnmake specific command-line and environment variables.
+#
+# Include once.
+
+ifndef _ENV_MK
+  # include package-specific rnmake overrides environment make file
+  -include $(RNMAKE_PKG_ROOT)/pkgcfg/env.mk
+  ifndef _ENV_MK
+    # default rnmake envirionment
+    include $(RNMAKE_ROOT)/Env.mk
+  endif
+endif
+
+#------------------------------------------------------------------------------
+# Color schemes (Colors.mk)
+#
+# Include once.
+
+ifndef _COLORS_MK
+ifneq "$(color)" "off"
+include $(RNMAKE_ROOT)/Colors.mk
+endif
+endif
+
+#------------------------------------------------------------------------------
+# Standard collection of RN Make System functions and variables (Std.mk)
+#
+# Always Include.
+
+include $(RNMAKE_ROOT)/Std.mk
+
+#------------------------------------------------------------------------------
+# Print help (Help.mk)
+#
+# Check if any of the make goals contain help goals. If true, include the
+# help makefile, which defines the help[-<subhelp>] rules.
+
+$(call includeIfGoals,help help-%,$(RNMAKE_ROOT)/Help.mk)
+
+#------------------------------------------------------------------------------
+# Compile and run unit tests (Rules.test.mk)
+#
+# Check if any of the make goals contain test goals. If true, include the
+# test makefile, which defines the [run-]test rules.
+
+$(call includeIfGoals,test run-test,$(RNMAKE_ROOT)/Rules.test.mk)
+
+# -------------------------------------------------------------------------
+# Architecture Dependent Definitions
+
+# Standard rnmake rules do not support the following targets.
+ifneq "$(findstring $(RNMAKE_ARCH_TAG),atmega16)" ""
+  $(error Rules.mk does not support $(RNMAKE_ARCH_TAG) rules)
+endif
+
+# architecture makefile name
+RNMAKE_ARCH_MKFILE = $(call findReqFile,\
+  $(RNMAKE_ROOT)/Arch/Arch.$(RNMAKE_ARCH_TAG).mk,\
+  See $(RNMAKE_ROOT)/Arch for available architectures)
+
+# Include the architecture make file.
+#
+# Always include.
+
+include $(RNMAKE_ARCH_MKFILE)
+
+# Included architecture makefile must define RNMAKE_ARCH which defines the
+# real architecture.
+ifndef RNMAKE_ARCH
+  $(error 'RNMAKE_ARCH': Not defined in including arhitecture makefile)
+endif
+
+
+#------------------------------------------------------------------------------
+# Package Master Makefile (required)
+#
+
+# package makefile
+RNMAKE_PKG_MKFILE = $(call findReqFile,$(RNMAKE_PKG_ROOT)/pkgcfg/package.mk,)
+
+# Include the package make file.
+#
+# Always include.
+
+include $(RNMAKE_PKG_MKFILE)
+
+# Included package master makefile must define RNMAKE_PKG which defines the
+# package name.
+ifndef RNMAKE_PKG
+  $(error 'RNMAKE_PKG': Not defined in including arhitecture makefile)
+endif
+
+#------------------------------------------------------------------------------
+# Product Makefile (Optional)
+
+ifdef RNMAKE_PROD_MKFILE
+  ifndef _PROD_MK
+    # optionally include (no error if not found)
+    -include $(RNMAKE_PROD_MKFILE)
+  endif
+endif
+
+#------------------------------------------------------------------------------
+# Include shell basic commands make file (Cmds.mk)
+#
+# Commands maybe conditionally define macros by architecuture.
+#
+# Always include.
+
+include $(RNMAKE_ROOT)/Cmds.mk
+
+#------------------------------------------------------------------------------
+# Documentation makes (Rules.doc.mk)
+#
+# Check if any of the make goals contain documentation goals. If true, include
+# the doc package makefile, which defines the documents and docs-<type> rules.
+
+ifdef RNMAKE_TOP_MAKEFILE
+$(call includeIfGoals,install install-docs documents docs-%,\
+	$(RNMAKE_ROOT)/Rules.doc.mk)
+else
+doc%:
+	$(error '$@' $(MSG_ROOT_ONLY))
+endif
+
+#------------------------------------------------------------------------------
+# Tarball package repo builds (Rules.tarball.mk)
+#
+# Check if any of the make goals contain tarball goals. If true, include the
+# tarball package makefile, which defines the tarballs and tarball-<type> rules.
+
+ifdef RNMAKE_TOP_MAKEFILE
+$(call includeIfGoals,tarballs tarball-%,$(RNMAKE_ROOT)/Rules.tarball.mk)
+else
+tarball%:
+	$(error '$@' $(MSG_ROOT_ONLY))
+endif
+
+#------------------------------------------------------------------------------
+# Debian package repo builds (Rules.dpkg.mk)
+#
+# Check if any of the make goals contain debian package goals. If true,
+# include the debian package makefile, which defines the dpkgs and
+# deb-pkg-<type> rules.
+
+ifdef RNMAKE_TOP_MAKEFILE
+$(call includeIfGoals,dpkgs dpkg-%,$(RNMAKE_ROOT)/Rules.dpkg.mk)
+else
+dpkg%:
+	$(error '$@' $(MSG_ROOT_ONLY))
+endif
+
+#------------------------------------------------------------------------------
+# Install Directories - Override as necessary in including Makefile.
+#
+# Note: These are traditional configuration names - keep the naming convention.
+# Note: Command line var=val variables cannot be altered.
+
+ifdef RNMAKE_INSTALL_XPREFIX
+  ifndef RNMAKE_INSTALL_PREFIX 
+    RNMAKE_INSTALL_PREFIX = $(RNMAKE_INSTALL_XPREFIX)/$(RNMAKE_ARCH)
+  endif
+endif
+
+ifdef RNMAKE_INSTALL_PREFIX 
+  RNMAKE_INSTALL_PREFIX := $(call mkAbsPath,$(RNMAKE_INSTALL_PREFIX),\
+                                          $(RNMAKE_PKG_ROOT))
+endif
+
+exec_prefix   ?= $(RNMAKE_INSTALL_PREFIX)
+bindir        ?= $(exec_prefix)/bin
+sbindir       ?= $(exec_prefix)/sbin
+libexecdir    ?= $(exec_prefix)/libexec
+sysconfdir    ?= $(RNMAKE_INSTALL_PREFIX)/etc
+localstatedir ?= $(RNMAKE_INSTALL_PREFIX)/var
+libdir        ?= $(exec_prefix)/lib
+includedir    ?= $(RNMAKE_INSTALL_PREFIX)/include
+sharedir      ?= $(RNMAKE_INSTALL_PREFIX)/share
+infodir       ?= $(RNMAKE_INSTALL_PREFIX)/info
+docdir        ?= $(RNMAKE_INSTALL_PREFIX)/share/doc
+mandir        ?= $(RNMAKE_INSTALL_PREFIX)/man
+srcdir        ?= $(RNMAKE_INSTALL_PREFIX)/src
+
+#------------------------------------------------------------------------------
+# Distribution Directories (Architecture Dependent)
+
+DIST_ROOT = $(RNMAKE_PKG_ROOT)/dist
+DIST_ARCH = $(DIST_ROOT)/dist.$(RNMAKE_ARCH)
+
+# Distributions Directories
+DISTDIR_BIN     = $(DIST_ARCH)/bin
+DISTDIR_LIB     = $(DIST_ARCH)/lib
+
+DISTDIR_INCLUDE = $(DIST_ARCH)/include
+DISTDIR_ETC     = $(DIST_ARCH)/etc
+DISTDIR_MAN     = $(DIST_ARCH)/man
+DISTDIR_SHARE   = $(DIST_ARCH)/share/$(RNMAKE_PKG_FULL_NAME)
+DISTDIR_DOC     = $(DIST_ARCH)/doc/$(RNMAKE_PKG_FULL_NAME)-doc
+DISTDIR_SRC     = $(DIST_ARCH)/src/$(RNMAKE_PKG_FULL_NAME)
+DISTDIR_REPO    = $(DIST_ARCH)/repo
+DISTDIR_TMP     = $(DIST_ARCH)/tmp
+DISTDIR_LIST    = $(DISTDIR_BIN) \
+                  $(DISTDIR_INCLUDE) \
+                  $(DISTDIR_LIB) \
+                  $(DISTDIR_ETC) \
+                  $(DISTDIR_SHARE) \
+                  $(DISTDIR_DOC) \
+                  $(DISTDIR_SRC) \
+                  $(DISTDIR_REPO) \
+                  $(DISTDIR_TMP) \
+                  $(DISTDIR_MAN)
+
+# distribution linker loader library directories
+DIST_LD_LIBDIRS = $(DISTDIR_LIB) \
+                  $(addprefix $(DISTDIR_LIB)/,$(RNMAKE_PKG_LIB_SUBDIRS))
+
+# virtual library path
+DIST_VPATH_LIB = $(call makeSearchPath,$(DIST_LD_LIBDIRS))
+
+
+#------------------------------------------------------------------------------
+# Local Directories, Made but not distributed. (Architecture Dependent)
+
+LOC_ROOT = $(RNMAKE_PKG_ROOT)/loc
+LOC_ARCH = $(LOC_ROOT)/loc.$(RNMAKE_ARCH)
+
+LOCDIR_BIN     = $(LOC_ARCH)/bin
+LOCDIR_LIB     = $(LOC_ARCH)/lib
+LOCDIR_INCLUDE = $(LOC_ARCH)/include
+LOCDIR_LIST    = $(LOCDIR_BIN) \
+                 $(LOCDIR_LIB) \
+                 $(LOCDIR_INCLUDE)
+
+LOC_VPATH_LIB    = $(LOCDIR_LIB)
+LOC_LD_LIBDIRS   = $(LOCDIR_LIB)
+
+#------------------------------------------------------------------------------
+# Intermediaries
+
+OBJDIR = obj/obj.$(RNMAKE_ARCH)
+
+# Dependencies Directory
+DEPSDIR = .deps
+
+# Dependencies File
+DEPSFILE = $(DEPSDIR)/deps.$(RNMAKE_ARCH)
+
+#------------------------------------------------------------------------------
+# VPATH Search Path 
+
+LIBS_VPATH = $(LOC_VAPATH_LIB):$(DIST_VPATH_LIB)
+vpath %.a  $(LIBS_VPATH)
+vpath %.so $(LIBS_VPATH)
+
+#------------------------------------------------------------------------------
+# Build Flags
+# Merge Architecture, Package and Parent Makefile variables into build flags.
+
+# Include Flags
+EXTRA_INCLUDES       = $(addprefix -I,$(EXTRA_INCDIRS))
+EXTRA_SYS_INCLUDES   = $(addprefix -I,$(EXTRA_SYS_INCDIRS))
+PKG_INCLUDES         = $(addprefix -I,$(RNMAKE_PKG_INCDIRS))
+PROD_INCLUDES        = $(addprefix -I,$(RNMAKE_PROD_INCDIRS))
+RNMAKE_ARCH_INCLUDES = $(addprefix -I,$(ARCH_INCDIRS))
+PKG_SYS_INCLUDES     = $(addprefix -I,$(RNMAKE_PKG_SYS_INCDIRS))
+DIST_INCLUDES        = -I$(DISTDIR_INCLUDE)
+LOC_INCLUDES         = -I$(LOCDIR_INCLUDE)
+
+INCLUDES = -I. \
+						$(EXTRA_INCLUDES) \
+						$(PKG_INCLUDES) \
+						$(PROD_INCLUDES) \
+						$(ARCH_INCLUDES) \
+						$(DIST_INCLUDES) \
+						$(LOC_INCLUDES) \
+						-I$(includedir) \
+						$(EXTRA_SYS_INCLUDES) \
+						$(RNMAKE_PKG_SYS_INCLUDES)
+
+# CPP Flags
+override CPPFLAGS	:= 	$(EXTRA_CPPFLAGS) \
+											$(RNMAKE_PKG_CPPFLAGS) \
+											$(RNMAKE_ARCH_CPPFLAGS) \
+											-DARCH_$(RNMAKE_ARCH) \
+											-DARCH="\"$(RNMAKE_ARCH)\"" \
+											$(CPPFLAGS)
+
+# C Flags
+override CFLAGS	:=	$(EXTRA_CFLAGS) \
+										$(RNMAKE_PKG_CFLAGS) \
+										$(RNMAKE_ARCH_CFLAGS)\
+									 	$(CFLAGS)
+
+# CXX Flags
+override CXXFLAGS	:=	$(EXTRA_CXXFLAGS) \
+											$(RNMAKE_PKG_CXXFLAGS) \
+											$(RNMAKE_ARCH_CXXFLAGS) \
+											$(CXXFLAGS)
+
+# Library Search Paths
+PKG_LD_LIBPATHS		=	$(addprefix -L,$(LOC_LD_LIBDIRS)) \
+										$(addprefix -L,$(DIST_LD_LIBDIRS))
+INS_LD_LIBPATHS 	= -L$(libdir) \
+										$(addprefix -L$(libdir)/,$(RNMAKE_PKG_LIB_INS_SUBDIRS)) \
+										$(addprefix -L$(libdir)/,$(EXTRA_LIB_INS_SUBDIRS)) 
+EXTRA_LD_LIBPATHS	= $(addprefix -L,$(EXTRA_LD_LIBDIRS))
+SYS_LD_LIBPATHS		= $(addprefix -L,$(RNMAKE_PKG_LD_SYS_LIBDIRS))
+LD_LIBPATHS			 := $(PKG_LD_LIBPATHS) \
+										$(INS_LD_LIBPATHS) \
+										$(EXTRA_LD_LIBPATHS) \
+										$(SYS_LD_LIBPATHS) \
+										$(LD_LIBPATHS)
+
+# Linked Libraries
+LD_LIBS						:= $(EXTRA_LD_LIBS) $(RNMAKE_PKG_LD_LIBS) $(LD_LIBS)
+
+# Linker flags
+LDFLAGS     			:= $(EXTRA_LDFLAGS) $(RNMAKE_PKG_LDFLAGS) $(LDFLAGS)
+
+# default link-loader is c compiler - override if using C++
+ifeq "$(LANG)" "C++"
+LD = $(LD_CXX)
+endif
+
+# default link-loader is c compiler - override if using CUDA
+ifeq "$(LANG)" "CUDA"
+LD = $(LD_CUDA)
+endif
+
+#------------------------------------------------------------------------------
+# Build Target Names
+# Construct build target files and set from parent makefile.
+
+# Preferred Library Type for Distribution
+LIB_TYPE := $(LIB_TYPE)
+
+# Complete list of core libraries
+STLIBS = $(RNMAKE_LOC_STLIBS) $(RNMAKE_DIST_STLIBS)
+SHLIBS = $(RNMAKE_DIST_SHLIBS)
+DLLIBS = $(RNMAKE_DIST_DLLIBS)
+
+# Complete list of core programs
+PGMS = $(RNMAKE_LOC_PGMS) $(RNMAKE_DIST_PGMS)
+
+# Release files
+REL_FILES = $(RNMAKE_PKG_REL_FILES) $(EXTRA_REL_FILES)
+
+# Share make targets
+SHARE_TGT = $(RNMAKE_PKG_SHARE_FILES) $(RNMAKE_SHARE_FILES)
+
+# Etc make targets
+ETC_TGT = $(RNMAKE_PKG_TGT_ETC) $(EXTRA_TGT_ETC)
+
+# $(call fq_lib_names,dir,lib...,libprefix,libsuffix)
+#   Make fully qualified library name(s) from core name(s).
+fq_lib_names = \
+$(foreach lib,$(2),$(if $($(lib).SUBDIR),\
+	$(addprefix $(1)/$($(lib).SUBDIR)/$(3),$(addsuffix $(4),$(lib))),\
+	$(addprefix $(1)/$(3),$(addsuffix $(4),$(lib)))))
+
+# $(call fq_loc_stlib_name,dir,libs)
+# 	Make fully qualified local static library name(s) from core name(s). Note
+# 	that local libraries do not support library subdirecties.
+fq_loc_stlib_names 	=	$(addprefix $(1)/$(STLIB_PREFIX),\
+											$(addsuffix $(STLIB_SUFFIX),$(2)))
+
+# $(call fq_stlib_names,dir,lib...)
+# 	Make fully qualified static library name(s) from core name(s).
+# 	Example:
+# 		panda.SUBDIR = fu
+# 		fqlibs = $(call fq_stlib_names,my/lib,kung panda)
+#
+#			Sets 'fqlibs' to 'my/libs/libkung.a my/libs/fu/libpanda.a'
+fq_stlib_names = $(call fq_lib_names,$(1),$(2),$(STLIB_PREFIX),$(STLIB_SUFFIX))
+
+# $(call fq_shlib_names,dir,lib...)
+# 	Make fully qualified shared library name(s) from core name(s).
+# 	Example:
+# 		lex.SUBDIR = villian
+# 		fqlibs = $(call fq_shlib_names,/home/lib,supergirl lex)
+#
+#			Sets 'fqlibs' to '/home/lib/libsupergirl.so /home/lib/villian/liblex.so'
+fq_shlib_names = $(call fq_lib_names,$(1),$(2),$(SHLIB_PREFIX),$(SHLIB_SUFFIX))
+
+# $(call fq_dllib_names,dir,lib...)
+# 	Make fully qualified dynamically linked library name(s) from core name(s).
+# 	Example:
+# 		falcon9.SUBDIR = spacex
+# 		newshepard.SUBDIR = blueorigin
+# 		fqlibs = $(call fq_dllib_names,lib,falcon9 newshepard)
+#
+#		Sets 'fqlibs' to '/lib/spacex/libfalcon9.so lib/blueorign/libnewshepard.so'
+fq_dllib_names = \
+  $(call fq_lib_names,$(1),$(2),$(DLLIB_PREFIX),$(DLLIB_SUFFIX))
+
+# Fully Qualified Static Libraries
+FQ_STLIBS	= $(call fq_loc_stlib_names,$(LOCDIR_LIB),$(RNMAKE_LOC_STLIBS)) \
+						$(call fq_stlib_names,$(DISTDIR_LIB),$(RNMAKE_DIST_STLIBS))
+
+# Fully Qualified Shared Libraries
+FQ_SHLIBS	= $(call fq_shlib_names,$(DISTDIR_LIB),$(RNMAKE_DIST_SHLIBS))
+
+# Fully Qualified Dynamically Linked Libraries
+FQ_DLLIBS	= $(call fq_dllib_names,$(DISTDIR_LIB),$(RNMAKE_DIST_DLLIBS))
+
+# Fully Qualified Program Name(s) from Core Name(s)
+fq_pgm_names = $(addprefix $(1)/$(PGM_PREFIX),\
+									$(addsuffix $(PGM_SUFFIX),$(2)))
+
+# Fully Qualified Programs
+FQ_PGMS	= $(call fq_pgm_names,$(LOCDIR_BIN),$(RNMAKE_LOC_PGMS)) \
+					$(call fq_pgm_names,$(DISTDIR_BIN),$(RNMAKE_DIST_PGMS))
+
+# Release Files
+FQ_REL_FILES = $(addprefix $(DISTDIR_DOC)/,$(REL_FILES))
+
+# Auto-Generated header files directory
+AUTO_INCDIR = $(firstword $(RNMAKE_PKG_INCDIRS))
+ifeq ($(AUTO_INCDIR),)
+  AUTO_INCDIR = $(LOCDIR_INCLUDE)
+endif
+
+# Auto-Generated Header Files
+AUTO_VERSION_H = $(AUTO_INCDIR)/$(RNMAKE_PKG)/version.h
+
+AUTOHDRS = $(AUTO_VERSION_H)
+
+# DEPRECATED AUTO_INSTALL_H = $(AUTO_INCDIR)/install-$(RNMAKE_ARCH).h
+# DEPRECATED AUTOHDRS += $(AUTO_INSTALL_H)
+
+#------------------------------------------------------------------------------
+# Target Specific Variables
+
+# Shared library compiled objects need special CFLAGS (e.g. -fPIC)
+$(FQ_SHLIBS): CFLAGS += $(SHLIB_CFLAGS)
+
+# Dynamically Linked library compiled objects need special CFLAGS
+$(FQ_DLLIBS): CFLAGS += $(DLLIB_CFLAGS)
+
+#------------------------------------------------------------------------------
+# Common Support Functions and Macros
+
+# Generate list of objects from sources given the core target name
+objs_from_src = $(addprefix $(OBJDIR)/,$(subst .c,.o,$($(1).SRC.C))) \
+ 								$(addprefix $(OBJDIR)/,$(subst .cxx,.o,$($(1).SRC.CXX))) \
+ 								$(addprefix $(OBJDIR)/,$(subst .cpp,.o,$($(1).SRC.CPP))) \
+ 								$(addprefix $(OBJDIR)/,$(subst .cu,.o,$($(1).SRC.CU)))
+
+# Make obj/obj-<RNMAKE_ARCH> in current directory
+mkobjdir = @test -d "$(OBJDIR)" || $(MKDIR) "$(OBJDIR)"
+
+########################### Explicit Rules #####################################
+
+# -------------------------------------------------------------------------
+# Target:	all (default)
+# Desc: 	Front end for making the [sub]package(s) (libraries, programs, tools,
+# 				documents, etc).
+# Notes: 	There are two version:
+# 					1) only done once on the first invocation and 
+# 					2) for all other invocations.
+# -------------------------------------------------------------------------
+ALL_DONE_MARK = $(DIST_ARCH)/all.done
+
+.PHONY: all
+ifdef MAKE_TOP_LEVEL 
+all: pkg-banner check-deps once-for-all $(EXTRA_TGT_ALL) pkg subdirs-all \
+			$(EXTRA_TGT_ALL_POST) all-done
+	$(footer)
+else
+all: check-deps $(EXTRA_TGT_ALL) pkg subdirs-all $(EXTRA_TGT_ALL_POST)
+endif
+
+.PHONY: once-for-all
+once-for-all: echo-once-for-all mkdistdirs mklocdirs autohdrs 
+	@$(RM) $(ALL_DONE_MARK)
+
+.PHONY: all-done
+all-done:
+	$(printCurGoal)
+	$(if $(RNMAKE_TOP_MAKEFILE),@date > $(ALL_DONE_MARK))
+
+# -------------------------------------------------------------------------
+# Target: pkg
+# Desc:   Makes the distribution [sub]package(s) (libraries, programs, tools, 
+#         documents, etc).
+
+.PHONY: pkg
+pkg: libs pgms
+
+# -------------------------------------------------------------------------
+# Target: libs
+# Desc:   Makes all libraries in current directory.
+
+# Make all libraries
+.PHONY: libs
+libs: pkg-banner stlibs shlibs dllibs
+
+# Make all static libraries
+.PHONY: stlibs
+stlibs: $(FQ_STLIBS)
+
+# Make all shared libraries
+.PHONY: shlibs
+shlibs: $(FQ_SHLIBS)
+
+# Make all dll libraries
+.PHONY: dllibs
+dllibs: $(FQ_DLLIBS)
+
+# Make specific distribution static librarary
+.PHONY: $(RNMAKE_DIST_STLIBS)
+$(RNMAKE_DIST_STLIBS): $(call fq_stlib_names,$(DISTDIR_LIB),$(GOAL_LIST))
+
+# Make specific distribution shared librarary
+.PHONY: $(RNMAKE_DIST_SHLIBS)
+$(RNMAKE_DIST_SHLIBS): $(call fq_shlib_names,$(DISTDIR_LIB),$(GOAL_LIST))
+
+# Make specific distribution dll librarary
+.PHONY: $(RNMAKE_DIST_DLLIBS)
+$(RNMAKE_DIST_DLLIBS): $(call fq_dllib_names,$(DISTDIR_LIB),$(GOAL_LIST))
+
+# Make specific local static librarary
+.PHONY: $(RNMAKE_LOC_STLIBS)
+$(RNMAKE_LOC_STLIBS): $(call fq_stlib_names,$(LOCDIR_LIB),$(GOAL_LIST))
+
+# $(call STLIBtemplate,lib,libdir)
+# Template to build a static library including all necessary prerequisites
+define STLIBtemplate
+ $(1).OBJS  = $(call objs_from_src,$(1))
+ $(1).FQ_LIB = $(call fq_stlib_names,$(2),$(1))
+ OUTDIR = $$(dir $$($(1).FQ_LIB))
+ $$($(1).FQ_LIB): $$($(1).OBJS)
+	@printf "\n"
+	@printf "$(color_tgt_lib)     $$@$(color_end)\n"
+	@test -d "$$(OUTDIR)" || $(MKDIR) $$(OUTDIR)
+	$$(STLIB_LD) $$(STLIB_LD_FLAGS) $$(STLIB_LD_EXTRAS) $$@  $$($(1).OBJS)
+	$$(RANLIB) $$@
+endef
+
+# Template to build a shared library including all necessary prerequisites
+define SHLIBtemplate
+ $(1).OBJS  = $(call objs_from_src,$(1))
+ $(1).LIBS := $(addprefix -l, $($(1).LIBS))
+ $(1).FQ_LIB = $(call fq_shlib_names,$(2),$(1))
+ OUTDIR = $$(dir $$($(1).FQ_LIB))
+ $$($(1).FQ_LIB): $$($(1).OBJS)
+	@printf "\n"
+	@printf "$(color_tgt_lib)     $$@$(color_end)\n"
+	@test -d "$$(OUTDIR)" || $(MKDIR) $$(OUTDIR)
+	$$(SHLIB_LD) $$(SHLIB_LD_FLAGS) $$(SHLIB_LD_EXTRAS) -o $$@  $$($(1).OBJS) $$(LD_LIBPATHS) $$($(1).LIBS) $$(LD_LIBS)
+endef
+
+# Template to build a dynamically linke library including all necessary
+# prerequisites
+define DLLIBtemplate
+ $(1).OBJS  = $(call objs_from_src,$(1))
+ $(1).LIBS := $(addprefix -l, $($(1).LIBS))
+ $(1).FQ_LIB = $(call fq_dllib_names,$(2),$(1))
+ OUTDIR = $$(dir $$($(1).FQ_LIB))
+ $$($(1).FQ_LIB): $$($(1).OBJS)
+	@printf "\n"
+	@printf "$(color_tgt_lib)     $$@$(color_end)\n"
+	@test -d "$$(OUTDIR)" || $(MKDIR) $$(OUTDIR)
+	$$(DLLIB_LD) $$(DLLIB_LD_FLAGS) $$(DLLIB_LD_EXTRAS) $$($(1).OBJS) $$(LD_LIBPATHS) $$($(1).LIBS) $$(LD_LIBS) -o $$@
+endef
+
+# For each library target, evaluate (i.e make) the template.
+$(foreach lib,$(RNMAKE_LOC_STLIBS),\
+  $(eval $(call STLIBtemplate,$(lib),$(LOCDIR_LIB))))
+
+$(foreach lib,$(RNMAKE_DIST_STLIBS),\
+	$(eval $(call STLIBtemplate,$(lib),$(DISTDIR_LIB))))
+
+$(foreach lib,$(RNMAKE_DIST_SHLIBS),\
+	$(eval $(call SHLIBtemplate,$(lib),$(DISTDIR_LIB))))
+
+$(foreach lib,$(RNMAKE_DIST_DLLIBS),\
+	$(eval $(call DLLIBtemplate,$(lib),$(DISTDIR_LIB))))
+
+# -------------------------------------------------------------------------
+# Target:	pgms
+# Desc: 	Makes all programs in current directory.
+
+# Make all programs
+.PHONY: pgms
+pgms: pkg-banner $(FQ_PGMS)
+
+# Make specific local program
+.PHONY: $(RNMAKE_LOC_PGMS)
+$(RNMAKE_LOC_PGMS): $(call fq_pgm_names,$(LOCDIR_BIN),$(GOAL_LIST))
+
+# Make specific distribution program
+.PHONY: $(RNMAKE_DIST_PGMS)
+$(RNMAKE_DIST_PGMS): $(call fq_pgm_names,$(DISTDIR_BIN),$(GOAL_LIST))
+
+# Template to build a program including all necessary prerequisites
+define PGMtemplate
+ $(1).OBJS  = $(call objs_from_src,$(1))
+ $(1).LIBDEPS  = $(shell $(RNMAKE_ROOT)/utils/libdeps.sh $(LIBS_VPATH) $($(1).LIBDEPS))
+ $(1).LIBS := $(addprefix -l, $($(1).LIBS))
+ $(1).FQ_PGM = $(call fq_pgm_names,$(2),$(1))
+ $$($(1).FQ_PGM): $$($(1).OBJS) $$($(1).LIBDEPS)
+	@printf "\n"
+	@printf "$(color_tgt_pgm)     $$@$(color_end)\n"
+	$$(LD) $$(LDFLAGS) $$(LD_LIBPATHS) $$($(1).OBJS) $$($(1).LIBS) $$(LD_LIBS) -o $$@
+endef
+
+libdeps = $(shell for lib in $(1); do echo lib$${lib}.a; done)
+
+# For each program target, evaluate (i.e make) template.
+$(foreach prog,$(RNMAKE_LOC_PGMS),\
+  $(eval $(call PGMtemplate,$(prog),$(LOCDIR_BIN))))
+
+$(foreach prog,$(RNMAKE_DIST_PGMS),\
+	$(eval $(call PGMtemplate,$(prog),$(DISTDIR_BIN))))
+
+# -------------------------------------------------------------------------
+# Target:	autohdrs
+# Desc: 	Makes auto-generated header files.
+
+autohdrs: $(EXTRA_AUTOHDRS) $(AUTOHDRS)
+
+# verion.h auto-generated header
+$(AUTO_VERSION_H): $(RNMAKE_PKG_MKFILE)
+	$(printCurGoal)
+	@$(call mkadir,$(dir $(@)))
+	@$(MAKE) -f $(RNMAKE_ROOT)/version_h.mk -s \
+		RNMAKE_PKG_ROOT=$(RNMAKE_PKG_ROOT) \
+		version_h=$(@) \
+		pkg_mk=$(RNMAKE_PKG_MKFILE) \
+		autogen
+
+# install.h auto-generated header DEPRECATED
+#$(AUTO_INSTALL_H): $(RNMAKE_ARCH_MKFILE)
+#	@test -d "$(AUTO_INCDIR)" || $(MKDIR) $(AUTO_INCDIR)
+#	@$(MAKE) -f $(RNMAKE_ROOT)/install_h.mk -s \
+#	 	RNMAKE_PKG_ROOT=$(RNMAKE_PKG_ROOT) install_h=$@ \
+#		arch=$(RNMAKE_ARCH) \
+#		bindir=$(bindir) \
+#		sbindir=$(sbindir) \
+#		libdir=$(libdir) \
+#		includedir=$(includedir) \
+#		sysconfdir=$(sysconfdir) \
+#		docdir=$(docdir) \
+#		mandir=$(mandir) \
+#		infodir=$(infodir)
+
+# -------------------------------------------------------------------------
+# Target:	hdrs
+# Desc: 	Makes interface header files
+
+RE_HDR = .*\.h\|.*\.hpp\|.*\.ipp\|.*\.inl
+
+# Make all distribution headers
+.PHONY: hdrs
+ifdef RNMAKE_TOP_MAKEFILE
+hdrs: echo-hdrs
+	$(call printGoalWithDesc,$(@),Copying interface headers to $(DISTDIR_INCLUDE))
+	$(call copyTrees,$(RNMAKE_HDR_FILES),$(DISTDIR_INCLUDE))
+else
+hdrs:
+	$(error '$@' $(MSG_ROOT_ONLY))
+endif
+
+# -------------------------------------------------------------------------
+# Target:	rel
+# Desc: 	Makes all release files
+# Notes:	Release files are only made at top level
+
+.PHONY: rel
+ifdef RNMAKE_TOP_MAKEFILE
+rel: echo-rel $(FQ_REL_FILES)
+else
+rel: ;
+endif
+
+# auto-generated
+.PHONY: $(DISTDIR_DOC)/VERSION.txt
+$(DISTDIR_DOC)/VERSION.txt:
+	@echo "autogen $(@)"
+	@echo "$(RNMAKE_PKG) v$(RNMAKE_PKG_VERSION_DOTTED)"  > $@
+	@echo "Copyright (C) $(RNMAKE_PKG_VERSION_DATE) $(RNMAKE_PKG_OWNER)" >> $@
+	@echo "" >> $@
+	@echo "Compiled: `date`" >> $@
+
+# markdown
+$(DISTDIR_DOC)/%.md: %.md
+	@-$(CP) $(CP_OPT_VERBOSE) $< $@
+
+# plain text
+$(DISTDIR_DOC)/%.txt: %.txt
+	@-$(CP) $(CP_OPT_VERBOSE) $< $@
+
+# xml
+$(DISTDIR_DOC)/%.xml: %.xml
+	@-$(CP) $(CP_OPT_VERBOSE) $< $@
+
+# xml
+$(DISTDIR_DOC)/%.html: %.html
+	@-$(CP) $(CP_OPT_VERBOSE) $< $@
+
+# specially named (hack)
+$(DISTDIR_DOC)/LICENSE: LICENSE
+	@-$(CP) $(CP_OPT_VERBOSE) $< $@
+
+# -------------------------------------------------------------------------
+# Target:	cfg
+# Desc: 	Makes 'classic' configuration distribution.
+# Notes:	System configuration files are only made at the top level
+
+ifdef RNMAKE_TOP_MAKEFILE
+cfg: etc lib-cfg share
+else
+cfg: ;
+endif
+
+# Copy etc files to distribution
+.PHONY: etc $(EXTRA_TGT_ETC)
+ifdef RNMAKE_TOP_MAKEFILE
+etc:
+	$(call printGoalWithDesc,$(@),Copying etc files to $(DISTDIR_ETC))
+	$(call copyTrees,$(RNMAKE_ETC_FILES),$(DISTDIR_ETC))
+else
+etc: ;
+endif
+
+# Copy library configuration files to distribution
+.PHONY: lib-cfg $(EXTRA_TGT_LIB_CFG)
+ifdef RNMAKE_TOP_MAKEFILE
+lib-cfg:
+	$(call printGoalWithDesc,$(@),\
+		Copying library configuration files to $(DISTDIR_LIB))
+	$(call copyTrees,$(RNMAKE_LIB_CFG_FILES),$(DISTDIR_LIB))
+else
+lib-cfg: ;
+endif
+
+# Copy share files to distribution
+.PHONY: share
+ifdef RNMAKE_TOP_MAKEFILE
+share: $(EXTRA_TGT_SHARE)
+	$(call printGoalWithDesc,$(@),Copying share files to $(DISTDIR_SHARE))
+	$(call copyTrees,$(RNMAKE_SHARE_FILES),$(DISTDIR_SHARE))
+else
+share: ;
+endif
+
+# Copy share files to distribution
+.PHONY: copy-src
+ifdef RNMAKE_TOP_MAKEFILE
+copy-src:
+	$(call printInfo,Copying source files to $(DISTDIR_SRC))
+	@$(RM) $(DISTDIR_SRC)
+	@test -d $(DISTDIR_SRC) || $(MKDIR) $(DISTDIR_SRC)
+	@$(RNMAKE_ROOT)/utils/src-filter.sh . | \
+		$(XARGS) $(CP_R) --parents --target-directory=$(DISTDIR_SRC)
+else
+copy-src: ;
+endif
+
+# -------------------------------------------------------------------------
+# Target:	mkdistdirs
+# Desc: 	Make Distribution Directories 
+
+.PHONY: mkdistdirs $(DISTDIR_LIST)
+mkdistdirs: echo-mkdistdirs $(DISTDIR_LIST)
+
+.PHONY: echo-mkdistdirs
+echo-mkdistdirs:
+ifeq ($(realpath $(DIST_ARCH)),)
+	$(call printGoalWithDesc,\
+		$(patsubst $(RNMAKE_PKG_ROOT)/%,%,$(DIST_ARCH)),\
+		Making distribution directories.)
+endif
+
+$(DISTDIR_LIST):
+	@test -d ${@} || $(MKDIR) ${@}
+
+# -------------------------------------------------------------------------
+# Target:	mklocdirs
+# Desc: 	Make Local Directories 
+
+.PHONY: mklocdirs $(LOCDIR_LIST)
+mklocdirs: echo-mklocdirs $(LOCDIR_LIST)
+
+.PHONY: echo-mklocdirs
+echo-mklocdirs:
+	$(if $(realpath $(LOCDIR_BIN)),,\
+	$(call printGoalWithDesc,\
+		$(patsubst $(RNMAKE_PKG_ROOT)/%,%,$(RNMAKE_LOCDIR_ROOT)),\
+		Making local directories.))
+
+$(LOCDIR_LIST):
+	@test -d ${@} || $(MKDIR) ${@}
+
+# -------------------------------------------------------------------------
+# Target:	install
+# Desc: 	Install the distribution
+# -------------------------------------------------------------------------
+.PHONY: install
+ifdef RNMAKE_TOP_MAKEFILE
+install: pkg-banner all echo-install $(EXTRA_TGT_INSTALL) check-prefix \
+					dist-finals install-components $(EXTRA_TGT_INSTALL_POST)
+	$(footer)
+else
+install: ;
+	$(error '$@' $(MSG_ROOT_ONLY))
+endif
+
+.PHONY: echo-install
+echo-install:
+	$(call printGoalWithDesc,$(@),Installing package $(RNMAKE_PKG_FULL_NAME))
+
+.PHONY: check-prefix
+check-prefix:
+	$(if $(RNMAKE_INSTALL_PREFIX),,$(error 'RNMAKE_INSTALL_PREFIX' not defined))
+	$(if $(call isAbsPath,$(RNMAKE_INSTALL_PREFIX)),,\
+								$(error '$(RNMAKE_INSTALL_PREFIX)' must be an absolute path))
+	$(if $(call eq,$(RNMAKE_INSTALL_PREFIX),$(RNMAKE_PKG_ROOT)),\
+		$(error '$(RNMAKE_INSTALL_PREFIX)' cannot install package onto itself.))
+
+
+# finalize distribution, install works from this tree
+.PHONY: dist-finals
+dist-finals: hdrs rel cfg
+
+# install components
+.PHONY: install-components
+install-components: install-bin install-lib install-includes \
+										install-share install-etc install-docs
+
+# install bin
+install-bin:
+	$(printCurGoal)
+	@printf "Installing executables to $(bindir)\n"
+	@$(RNMAKE_ROOT)/utils/doinstall.sh --verbose \
+		--strip-pgm=$(STRIP) --strip-opt='$(STRIP_EXE_OPTS)' \
+		$(DISTDIR_BIN) $(bindir)
+
+# install lib
+install-lib:
+	$(printCurGoal)
+	@printf "Installing libraries to $(libdir)\n"
+	@$(RNMAKE_ROOT)/utils/doinstall.sh --verbose \
+		--strip-pgm=$(STRIP) --strip-opt='$(STRIP_LIB_OPTS)' \
+		$(DISTDIR_LIB) $(libdir)
+
+# install includes
+install-includes: hdrs
+	$(printCurGoal)
+	@printf "Installing includes to $(includedir)\n"
+	@$(RNMAKE_ROOT)/utils/doinstall.sh $(DISTDIR_INCLUDE) $(includedir)
+
+# install documentation
+install-docs: documents
+	$(printCurGoal)
+	@printf "Installing documents to $(docdir)/$(RNMAKE_PKG_FULL_NAME)\n"
+	@$(RNMAKE_ROOT)/utils/doinstall.sh $(DISTDIR_DOC) $(docdir)/$(RNMAKE_PKG_FULL_NAME)
+
+# install share files
+install-share:
+	$(printCurGoal)
+	@printf "Installing system share files to $(sharedir)\n"
+	@$(RNMAKE_ROOT)/utils/doinstall.sh $(DISTDIR_SHARE) $(sharedir)/$(RNMAKE_PKG_FULL_NAME)
+	@if [ ! -e $(sharedir)/$(RNMAKE_PKG) ]; \
+	then \
+		$(SYMLINK) $(sharedir)/$(RNMAKE_PKG_FULL_NAME) $(sharedir)/$(RNMAKE_PKG); \
+	elif [ -L $(sharedir)/$(RNMAKE_PKG) ]; \
+	then \
+		$(UNLINK) $(sharedir)/$(RNMAKE_PKG); \
+		$(SYMLINK) $(sharedir)/$(RNMAKE_PKG_FULL_NAME) $(sharedir)/$(RNMAKE_PKG); \
+	fi
+
+# install etc
+install-etc:
+	$(printCurGoal)
+	@printf "Installing system configuration to $(sysconfdir)\n"
+	@printf "\n"
+	@$(RNMAKE_ROOT)/utils/doinstall.sh $(DISTDIR_ETC) $(sysconfdir)
+
+# install source
+install-src:
+	$(printCurGoal)
+	@printf "Installing source to $(srcdir)\n"
+	@printf "\n"
+	@$(RNMAKE_ROOT)/utils/doinstall.sh $(DISTDIR_SRC) $(srcdir)/$(RNMAKE_PKG_FULL_NAME)
+
+# -------------------------------------------------------------------------
+# Target:	deps
+# Desc: 	Makes dependencies
+# Output: .deps/deps.$(RNMAKE_ARCH)
+# -------------------------------------------------------------------------
+.PHONY: deps
+deps: pkg-banner echo-deps autohdrs mkdepsdir $(EXTRA_TGT_DEPS) hdrdeps \
+				libdeps subdirs-deps
+	$(footer)
+
+.PHONY: echo-deps
+echo-deps:
+	$(call printGoalWithDesc,$(@),Making dependencies for $(CURDIR))
+
+.PHONY: hdrdeps
+hdrdeps: 
+	@$(call printGoalWithDesc,$(@),Making C/C++ dependencies)
+	@echo $(call hdrdeps_sh,$(STLIBS) $(SHLIBS) $(DLLIBS) $(PGMS))
+
+hdrdeps_sh = \
+	$(shell $(RNMAKE_ROOT)/utils/hdrdeps.sh \
+		-c "$(RNMAKE_MAKEDEPS)" \
+		-f $(DEPSFILE) \
+		-o $(OBJDIR) \
+		-d "$(CPPFLAGS)" \
+		$(INCLUDES) \
+		$(foreach f,\
+			$(sort 	$(addsuffix .SRC.C,$(1)) \
+							$(addsuffix .SRC.CXX,$(1)) \
+							$(addsuffix .SRC.CPP,$(1))),\
+					$($(f))))
+
+libdeps:
+
+.PHONY: mkdepsdir
+mkdepsdir:
+	@test -d $(DEPSDIR) || $(MKDIR) $(DEPSDIR)
+
+# Check if deps file exist or error.
+# If the override variable 'nodeps' is not empty, then no check is performed.
+define checkDeps
+	$(if $(nodeps),,\
+		$(if $(realpath $(DEPSFILE)),,\
+			$(error No dependencies file - Try 'make deps' first)))
+endef
+
+# Include dependency file or error canned sequence.
+# If the override variable 'nodeps' is not empty, then no action is performed.
+define includeDeps
+	$(if $(nodeps),,\
+		$(if $(call isFile,$(DEPSFILE)),\
+			$(eval include $(DEPSFILE)),\
+	$(error No dependencies file - Try 'make deps' first)))
+endef
+
+# Conditionally include any dependency file for specific targets only.
+$(if $(call findGoals,all test),$(call includeDeps),)
+
+# Check deps target
+.PHONY: check-deps
+check-deps:
+	$(call checkDeps)
+
+# -------------------------------------------------------------------------
+# Target:	clean
+# Desc: 	Deletes generated intermediate files
+# -------------------------------------------------------------------------
+.PHONY: clean
+clean: pkg-banner clean-here subdirs-clean clean-final
+	$(footer)
+
+.PHONY: clean-here
+clean-here: clean-dft $(EXTRA_TGT_CLEAN)
+
+.PHONY: clean-dft
+clean-dft:
+	$(call printGoalWithDesc,clean,Cleaning $(CURDIR) intermediate files)
+	$(RM) *.o *.e *.c~ *.cxx~ .h~ *.pyc *.pyo
+	$(RM) a.out
+	$(RM) $(OBJDIR)
+
+.PHONY: clean-final
+ifdef RNMAKE_TOP_MAKEFILE
+clean-final:
+	$(call printDirBanner,,$(@))
+	$(call printGoalWithDesc,$(@),Final clean-up)
+	$(RM)	*.out *.log
+else
+clean-final:
+endif
+
+# -------------------------------------------------------------------------
+# Target:	distclean (clobber)
+# Desc: 	Cleans plus deletes distribution
+# -------------------------------------------------------------------------
+.PHONY: distclean clobber
+distclean clobber: pkg-banner distclean-here subdirs-distclean distclean-final
+
+.PHONY: distclean-here
+distclean-here: clean-here distclean-dft $(EXTRA_TGT_DISTCLEAN)
+
+.PHONY: distclean
+distclean-dft:
+	$(call printGoalWithDesc,distclean,Clobbering $(CURDIR) distribution files)
+	$(RM) $(DEPSFILE)
+
+.PHONY: distclean-final
+ifdef RNMAKE_TOP_MAKEFILE
+distclean-final: clean-final
+	$(call printDirBanner,,$(@))
+	$(call printGoalWithDesc,$(@),Clobbering distribution)
+	$(RM) $(DIST_ARCH)
+	$(RM) $(LOC_ARCH)
+	$(RM) $(AUTOHDRS)
+	$(footer)
+else
+distclean-final:
+endif
+
+# -------------------------------------------------------------------------
+# Target:	subdirs
+# Desc: 	Recursively make subdirectories.
+# Notes:	Any two or more goals that traverse the subdirectory tree need
+# 				separate subdirectory targets. Otherwise, only the first goal
+# 				will traverse.
+
+# Subdirectory call
+.PHONY: subdirs
+subdirs: pkg-banner $(RNMAKE_SUBDIRS)
+
+# Make all sub-directories with all command-line goals
+$(RNMAKE_SUBDIRS):
+	$(call printDirBanner,$(@),$(GOAL_LIST))
+	@$(MAKE) $(EXTRA_MAKE_FLAGS) -C $(@) $(GOAL_LIST)
+	@printf "    $(color_dir_banner)~~$(color_end)\n"
+
+#
+# Template to build subdirectories by goal rules. Since rnmake traverses the
+# command-line goals depth first, and GNU make will only execute a rule once,
+# this template builds unique subdirectory rules.
+#
+# Built Rules:
+#   subdirs-<goal>: $(RNMAKE_SUBDIRS.<goal>)
+#   $(RNMAKE_SUBDIRS.<goal>:
+#   	<recipe>
+#
+# Usage: $(call SUBDIRtemplate,goal)
+#
+define SUBDIRtemplate
+RNMAKE_SUBDIRS.$(1) = $(addsuffix .$(1),$(RNMAKE_SUBDIRS))
+
+subdirs-$(1): $$(RNMAKE_SUBDIRS.$(1))
+
+$$(RNMAKE_SUBDIRS.$(1)):
+	$$(call printDirBanner,$$(basename $$(@)),$(1))
+	@$$(MAKE) $$(EXTRA_MAKE_FLAGS) -C $$(basename $$(@)) $(1)
+	@printf "    $(color_dir_banner)~~$(color_end)\n"
+endef
+
+# all goals with subdirectory traversal prerequisite
+GOALS_WITH_SUBDIRS += deps all clean distclean supp-docs
+
+# build make rules for goal-specific subdirectories
+$(foreach goal,$(GOALS_WITH_SUBDIRS),$(eval $(call SUBDIRtemplate,$(goal))))
+
+# Special supplemental documentation subdirectory target. The documents are
+# only made at the top make file, but subdirectories generate additional
+# documentation.
+supp-docs: $(EXTRA_TGT_DOC) subdirs-supp-docs
+
+# -------------------------------------------------------------------------
+# Pretty Print Doodles.
+#
+# Defines canned sequences, goal recipes, and goal prerequisite targets.
+
+# Pretty print package banner, but only once.
+.PHONY: pkg-banner
+pkg-banner:
+	$(if $(MAKE_TOP_LEVEL),\
+		$(call printPkgBanner,$(RNMAKE_PKG_FULL_NAME),$(RNMAKE_ARCH),$(GOAL_LIST)))
+
+# Print directory banner with current directory . and goal %.
+banner-%:
+	$(call printDirBanner,.,$(subst banner-,,$(@)))
+
+# Print target goal %.
+echo-%:
+	$(call printGoal,$(@))
+
+# $(footer)
+# 	Conditionally print footer when last goal made.
+footer = $(call printFooter,$(@),$(LAST_GOAL))
+
+# -------------------------------------------------------------------------
+# force some targets to always make
+force: ;
+
+
+########################### Pattern Rules #####################################
+
+# C Rule: <name>.c -> $(OBJDIR)/<name>.o
+$(OBJDIR)/%.o : %.c
+	$(mkobjdir)
+	@printf "\n"
+	@printf "$(color_tgt_file)     $(<)$(color_end)\n"
+	$(CC) $(CFLAGS) $(CPPFLAGS) $(INCLUDES) -o $(@) -c $(<)
+
+# C++ Rule: <name>.cxx -> $(OBJDIR)/<name>.o
+$(OBJDIR)/%.o : %.cxx
+	$(mkobjdir)
+	@printf "\n"
+	@printf "$(color_tgt_file)     $(<)$(color_end)\n"
+	$(CXX) $(CXXFLAGS) $(CPPFLAGS) $(INCLUDES) -o $(@) -c $(<)
+
+# C++ Rule: <name>.cpp -> $(OBJDIR)/<name>.o
+$(OBJDIR)/%.o : %.cpp
+	$(mkobjdir)
+	@printf "\n"
+	@printf "$(color_tgt_file)     $(<)$(color_end)\n"
+	$(CXX) $(CXXFLAGS) $(CPPFLAGS) $(INCLUDES) -o $(@) -c $(<)
+
+# CUDA Rule: <name>.cu -> $(OBJDIR)/<name>.o
+$(OBJDIR)/%.o : %.cu
+	$(mkobjdir)
+	@printf "\n"
+	@printf "$(color_tgt_file)     $(<)$(color_end)\n"
+	$(CUDA) $(CUDAFLAGS) $(CPPFLAGS) $(INCLUDES) -o $(@) -c $(<)
+
+# Compile a single c file. (Nice for debugging)
+%.o : %.c force
+	$(mkobjdir)
+	@printf "\n"
+	@printf "$(color_tgt_file)     $(<)$(color_end)\n"
+	$(CC) $(CFLAGS) $(CPPFLAGS) $(INCLUDES) -o $(OBJDIR)/$(@) -c $(<)
+
+# Compile a single cxx file. (Nice for debugging)
+%.o : %.cxx force
+	$(mkobjdir)
+	@printf "\n"
+	@printf "$(color_tgt_file)     $(<)$(color_end)\n"
+	$(CXX) $(CXXFLAGS) $(CPPFLAGS) $(INCLUDES) -o $(OBJDIR)/$(@) -c $(<)
+
+# Compile a single cpp file. (Nice for debugging)
+%.o : %.cpp force
+	$(mkobjdir)
+	@printf "\n"
+	@printf "$(color_tgt_file)     $(<)$(color_end)\n"
+	$(CXX) $(CXXFLAGS) $(CPPFLAGS) $(INCLUDES) -o $(OBJDIR)/$(@) -c $(<)
+
+# Compile a single cuda file. (Nice for debugging)
+%.o : %.cu force
+	$(mkobjdir)
+	@printf "\n"
+	@printf "$(color_tgt_file)     $(<)$(color_end)\n"
+	$(CUDA) $(CUDAFLAGS) $(CPPFLAGS) $(INCLUDES) -o $(@) -c $(<)
+
+# C PreProcess Rule: <name>.c -> <name>.e
+# Generate c preprocessor output (useful to debug compiling errors)
+# Historically the output suffix is .i but this can interfere with swig 
+# interface files that also have the .i suffix. So .e will be used until 
+# I find another "standard" (-E is the GNU preprocessor flag).
+%.e : %.c force
+	@printf "\n"
+	@printf "$(color_tgt_file)     $(<)$(color_end)\n"
+	$(CC) $(CFLAGS_CPP_ONLY) $(CFLAGS) $(CPPFLAGS) $(INCLUDES) -o $(@) -c $(<)
+
+# C PreProcess Rule: <name>.cpp -> <name>.e
+# Generate c preprocessor output (useful to debug compiling errors)
+%.e : %.cxx force
+	@printf "\n"
+	@printf "$(color_tgt_file)     $(<)$(color_end)\n"
+	$(CXX) $(CXXFLAGS_CPP_ONLY) $(CXXFLAGS) $(CPPFLAGS) $(INCLUDES) -o $(@) -c $(<)
+
+# C PreProcess Rule: <name>.cpp -> <name>.e
+# Generate c preprocessor output (useful to debug compiling errors)
+%.e : %.cpp force
+	@printf "\n"
+	@printf "$(color_tgt_file)     $(<)$(color_end)\n"
+	$(CXX) $(CXXFLAGS_CPP_ONLY) $(CXXFLAGS) $(CPPFLAGS) $(INCLUDES) -o $(@) -c $(<)
+
+# C PreProcess Rule: <name>.cu -> <name>.e
+# Generate c preprocessor output (useful to debug compiling errors)
+%.e : %.cu force
+	@printf "\n"
+	@printf "$(color_tgt_file)     $(<)$(color_end)\n"
+	$(CUDA) $(CUDAFLAGS_CPP_ONLY) $(CUDAFLAGS) $(CPPFLAGS) $(INCLUDES) -o $(@) -c $(<)
+null:
+	@echo "null me"
+
+
+# -------------------------------------------------------------------------
+# default error rule
+
+#%::
+#	$(call printError,$(@): Unknown target. See 'make help' for help.)
+
+
+ifdef RNMAKE_DOXY
+/*! \endcond RNMAKE_DOXY */
+endif

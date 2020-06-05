@@ -1,0 +1,68 @@
+/*! \file
+
+\mainpage @PKG_NAME@
+\section intro Introduction
+
+\htmlonly
+<div style="float:right; border:0; text-align:center;">
+\endhtmlonly
+\image html glyptodon.png "Figure 1: Clan Mascot"
+\htmlonly
+</div>
+\endhtmlonly
+
+@PKG_DESC@
+
+<i>@PKG_KW@</i>
+
+<b>@ORG_FQ</b>
+
+<b>@PKG_AUTHOR</b>
+
+\verbinclude @WS@/README.md
+
+\subsection intro_chant Chant
+
+\verbatim
+  Glyptodont
+Glpyto, glypto, giant dont
+How you wander as I want
+
+Ooga Ooga
+Ooga Ooga
+Oog Oog Oog
+
+Bop upon the weaker so frail
+With a clubbing by your tail
+
+Ooga Ooga
+Ooga Ooga
+Oog Oog Oog
+\endverbatim
+
+\image html club_logo.png
+
+\section clan Clan of the Cave Cricket
+Congrats to a truly wonderful team producing the awesome product
+\@DOXY_ALIAS_PROD@, on-time and below budget. Ooga ooga!
+
+Name            | Sex    | Age | Birth Moon
+--------------- | ------ | --- | ----------
+Bitey           | male   |   6 | Sturgeon Moon
+Eet Bugs        | female |   7 | Corn Moon
+Gums            | female |  29 | Snow Moon
+Izz             | female |  19 | Buck Moon
+Krell           | male   |   2 | Worm Moon
+Mook            | female |  22 | Flower Moon
+Nogga Ya        | female |  20 | Beaver Moon
+Ogg             | male   |  17 | Strawberry Moon
+Old Wink        | male   |  31 | Hunter Moon
+Old Old Wink    | male   |  32 | Cold Moon
+Oog the Great   | male   |  28 | Pink Moon
+Thag B. Caveman | male   |  24 | Wolf Moon
+Thung           | female |   1 | Worm Moon
+
+\page page_license License
+\verbinclude @WS@/LICENSE
+
+*/ // end comment block

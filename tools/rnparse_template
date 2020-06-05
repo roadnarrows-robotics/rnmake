@@ -1,0 +1,273 @@
+#!/usr/bin/env python3
+#
+# File:
+#   rntemplate
+#
+# Usage:
+#   rntemplate [OPTIONS] [VAR=VAL [VAR=VAL...]] TEMPLATE [OUTFILE]
+#   rntemplate --help
+#
+# Description:
+#   Make documentation home page index.html.
+#
+# /*! \file */
+# /*! \cond RNMAKE_DOXY*/
+
+import sys
+import os
+import re
+import getopt
+
+# fix up python path
+sys.path.insert(0, os.path.realpath(os.path.dirname(__file__)+'/../utils'))
+
+try:
+  from rnmake.color import ColorfulOutput
+  from rnmake.atat import AtAt, AtAtError
+except ImportError as e:
+  print(f"{e}: Expeceted to be found in 'PREFIX/rnmake/utils/rnmake'")
+  sys.exit(8)
+except AttributeError as e:
+  print(f"{e}")
+  sys.exit(8)
+
+# -----------------------------------------------------------------------------
+class UsageError(Exception):
+  """ Command-Line Options UsageError Exception Class. """
+  def __init__(self, msg):
+    self.msg = msg
+
+# -----------------------------------------------------------------------------
+class Application:
+  """ Application class. """
+
+  def __init__(self):
+    self.out        = ColorfulOutput()
+    self.atat       = AtAt(out=self.out)
+
+  def gen_output(self):
+    if not self.kwargs['outfile']:
+      return
+    self.status(f"Generating {self.kwargs['outfile']}")
+    if not self.atat.is_template_loaded():
+      try:
+        self.atat.load_template(self.kwargs['template'])
+      except AtAtError as e:
+        self.out.ioerror(e.msg, filename=e.filename)
+        return
+    if not self.atat.is_template_parsed():
+      self.atat.parse()
+    try:
+      with open(self.kwargs['outfile'], 'w') as fout:
+        fout.writelines(self.atat.postparsed_content())
+      mode = os.stat(self.kwargs['template']).st_mode
+      os.chmod(self.kwargs['outfile'], mode)
+    except OSError as e:
+      self.out.ioerror(e.strerror, filename=e.filename, line_num=e.line_num)
+
+  def show(self):
+    """ Show what and such. """
+    from rnmake.atat import AtAtPrettyPrint
+    pretty = AtAtPrettyPrint(self.atat)
+
+    # pass 1: template not required
+    pass2 = []
+    for what in self.kwargs['show']:
+      if what == 'def':
+        pretty.show_defined()
+        print()
+      else:
+        pass2.append(what)
+
+    if not self.kwargs['template']:
+      self.out.error("No template")
+      return
+
+    if len(pass2) > 0 and not self.atat.is_template_loaded():
+      try:
+        self.atat.load_template(self.kwargs['template'])
+      except AtAtError as e:
+        self.out.ioerror(e.msg, filename=e.filename)
+        return
+
+    # pass 2: need (parsed) template
+    for what in pass2:
+      if what == 'ref':
+        pretty.show_referenced()
+      elif what == 'pre':
+        pretty.show_preparsed()
+      elif what == 'post':
+        pretty.show_postparsed()
+      print()
+ 
+  def status(self, what):
+    if self.kwargs['verbose']:
+      self.out.info(what)
+
+  def verbose(self, msg):
+    if self.kwargs['verbose']:
+      self.out.cprint('normal', msg)
+
+  def debug(self, what, *objs):
+    if self.kwargs['debug']:
+      self.out.debug(what, *objs)
+
+  def fatal(self, ec, *emsgs, filename=None, line_num=0):
+    """
+    Show fatal message and exit.
+
+    Parameters:
+      ec        Exit code.
+      emsgs     Arguments to the message.
+      filename  Optional filename associated with I/O.
+      line_num  Option line number of filename.
+    """
+    self.out.iofatal(*emsgs, filename=filename, line_num=line_num)
+    sys.exit(ec)
+
+  def turn_off_color(self):
+    """ Disable color output. """
+    self.out.disable_color()
+
+  def print_usage_error(self, *args):
+    """ Print error usage message. """
+    emsg = ': '.join([f"{a}" for a in args])
+    if emsg:
+      print(f"{self.argv0}: error: {emsg}")
+    else:
+      print(f"{self.argv0}: error")
+    print(f"Try '{self.argv0} --help' for more information.")
+  
+  def print_help(self):
+    """ Print command-line help. """
+    print(f"""\
+Usage: {self.argv0} [OPTIONS] [VAR=VAL [VAR=VAL...]] TEMPLATE [OUTFILE]
+       {self.argv0} --help
+
+Show data relevant to the TEMPLATE and/or generate post-parsed OUTFILE.
+
+Options:
+      --debug       Enable debugging output.
+
+      --no-color    Disable color output.
+
+      --show=WHAT   Show WHAT to stdout. May be iterated. WHAT is one of:
+                      all   Show all WHATs.
+                      def   Show defined atat variables.
+                      ref   Show atat variables referenced in template.
+                      pre   Show pre-parsed template contents.
+                      post  Show post-parsed template contents.
+ 
+      --verbose     Enable status and summary output.
+
+  -h, --help        Display this help and exit.
+
+Description:
+TEMPLATE
+Text file with embedded @VAR@ and @VAR:FMT@ tags.
+
+OUTFILE
+Post-parse output text file. Will overwrite any existing file.
+
+VAR=VAL
+The VAR=VAL arguments define additional name-value pairs to be used as working
+atat @VAR@ variables for template processing. The VAR name is case insensitive.
+
+See '{self.argv0} --show ref' for referenced variables in template.
+""")
+
+  def get_options(self, argv):
+    """ Get main options and arguments. """
+    self.argv0 = os.path.basename(argv[0])
+
+    self.out.set_prefix(self.argv0)
+
+    # option defaults
+    kwargs = {}
+    kwargs['debug']     = False
+    kwargs['verbose']   = False
+    kwargs['color']     = True
+    kwargs['show']      = []
+    kwargs['atat']      = {}
+    kwargs['template']  = None
+    kwargs['outfile']   = None
+
+    shortopts = "?h"
+    longopts  = ['help', 'no-color', 'show=', 'debug', 'verbose']
+    show_args = ['def', 'ref', 'pre', 'post']
+
+    # parse command-line options
+    try:
+      try:
+        opts, args = getopt.getopt(argv[1:], shortopts, longopts=longopts)
+      except getopt.error as msg:
+        raise UsageError(msg)
+      for opt, optarg in opts:
+        if opt in ('-h', '--help', '-?'):
+          self.print_help()
+          sys.exit(0)
+        elif opt in ('--no-color'):
+          kwargs['color'] = False
+          self.turn_off_color()
+        elif opt in ('--show'):
+          if optarg == 'all':
+              kwargs['show'] = show_args
+          elif optarg in show_args and optarg not in kwargs['show']:
+            kwargs['show'] += [optarg]
+          else:
+            raise UsageError(f"'{optarg}': Unknown 'show' option argument.")
+        elif opt in ('--debug'):
+          kwargs['debug'] = True
+        elif opt in ('--verbose'):
+          kwargs['verbose'] = True
+    except UsageError as err:
+      self.print_usage_error(err.msg)
+      sys.exit(2)
+
+    # non-nvp arguments
+    nargs = []
+
+    # name=value pair regex
+    reNvp = re.compile('([a-zA-Z_]\w*)=(.*)')
+    
+    for arg in args:
+      g = reNvp.match(arg)
+      if g is not None and len(g.groups()) == 2:
+        kwargs['atat'][g[1].upper()] = g[2]
+      else:
+        nargs.append(arg)
+
+    if len(nargs) < 1:
+      self.print_usage_error("No TEMPLATE input file specified")
+      sys.exit(2)
+    else:
+      kwargs['template'] = nargs[0]
+
+    if len(nargs) >= 2:
+      kwargs['outfile'] = nargs[1]
+
+    return kwargs
+
+  #--
+  def main(self, argv):
+    """ main """
+    self.kwargs = self.get_options(argv)
+
+    self.debug('kwargs =', self.kwargs)
+
+    self.atat.merge_vars(self.kwargs['atat'])
+
+    if self.kwargs['show']:
+      self.show()
+
+    if self.kwargs['outfile']:
+      self.gen_output()
+
+    return 0
+
+#------------------------------------------------------------------------------
+app = Application()
+sys.exit( app.main(sys.argv) )
+
+
+#/*! \endcond RNMAKE_DOXY */

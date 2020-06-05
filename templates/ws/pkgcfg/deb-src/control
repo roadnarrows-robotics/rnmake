@@ -1,0 +1,7 @@
+Package:@PKG_NAME@-src
+Version: @RT_VERSION@
+Section: src
+Priority: optional
+Architecture: @RT_ARCH@
+Maintainer: @PKG_AUTHOR@ <@PKG_EMAIL@>
+Description: @PKG_NAME@ source package.

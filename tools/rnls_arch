@@ -1,0 +1,209 @@
+#!/bin/bash
+#
+# File:
+#   rnmake_laarch
+#
+# Usage:
+#   rnmake_laarch [OPTION]... [RNMAKEVAR]...
+#   rnmake_laarch --help
+#
+# Description:
+#   List all available RoadNarrows Make System architectures.
+#
+
+argv0=$(basename $0)
+
+# callHelp
+callHelp()
+{
+  cat <<EOH
+Usage: ${argv0} [OPTION]... [RNMAKEVAR]...
+       ${argv0} --help
+
+List all available RoadNarrows Make System architectures.
+
+Options:
+  --no-color  Disable color output. Default: colors are enabled.
+  -l, --long  Use a long listing format.
+
+  --help      Print this help and exit.
+
+List all available RoadNarrows Make System architectures. By default,
+only the RNMAKE_ARCH_TAGs are printed. That is, for all architecture makefiles
+found of the form Arch.\${RNMAKE_ARCH_TAG}.mk, the tag will be printed.
+
+If the long format is specifed, then the real RNMAKE_ARCH and RNMAKE_FQARCH
+values are also printed.
+
+Any command-line argument is considered an RNMAKEVAR argument. All RNMAKEVAR
+arguments are passed to the make command.
+EOH
+  exit 0;
+}
+
+# ansi colors
+color_pre="\033["
+color_post="\033[0m"
+color_red="0;31m"
+color_green="0;32m"
+color_yellow="0;33m"
+color_cyan="0;36m"
+color_gray="1;30m"
+color_bold_red="1;31m"
+
+# colors used
+color_info="${color_pre}${color_green}"
+color_warn="${color_pre}${color_yellow}"
+color_error="${color_pre}${color_red}"
+color_fatal="${color_pre}${color_bold_red}"
+color_banner="${color_pre}${color_cyan}"
+color_end=${color_post}
+
+# turnOffColor
+turnOffColor()
+{
+  color_info=
+  color_warn=
+  color_error=
+  color_fatal=
+  color_banner=
+  color_end=
+}
+
+# showInfo msg [msg...]
+showInfo()
+{
+  printf "${color_info}${*}${color_end}\n"
+}
+
+# showWarning wmsg [wmsg...]
+showWarning()
+{
+  printf "${argv0}: ${color_warn}${*}${color_end}\n" >&2
+}
+
+# showError emsg [emsg...]
+showError()
+{
+  printf "${argv0}: ${color_error}${*}${color_end}\n" >&2
+}
+
+# fatal exitcode emsg
+fatal()
+{
+  printf "${argv0}: ${color_fatal}${2}${color_end}\n" >&2
+  exit ${1}
+}
+
+# long and short options
+longopts="no-color,long,help"
+shortopts="l"
+
+# get the options
+OPTS=$(getopt --name ${argv0} -o "${shortopts}" --long "${longopts}" -- "${@}")
+
+if [ $? != 0 ]
+then
+  fatal 2 "Try '${argv0} --help' for more information."
+fi
+
+#echo "${OPTS}"
+eval set -- "${OPTS}"
+
+# command line option and argument variables
+rnmake_root=${RNMAKE_ROOT}
+longformat=false
+rnmakevars=
+pkgs=
+
+# process command-line options
+while true
+do
+  case "$1" in
+    --no-color)
+        turnOffColor
+        rnmakevars="color=off"
+        shift;;
+    -l|--long) longformat=true; shift;;
+    --help) callHelp; shift;;
+
+    --) shift; break;;
+    *)  break;;
+  esac
+done
+
+# process command-line arguments
+for arg in "${@}"
+do
+  # name=value
+  name="${arg%=*}"
+  if [ ! -z "${name}" ]
+  then
+    value="${arg#${name}=}"
+    rnmakevars="${rnmakevars} ${arg}"
+    if [ ${name} = "rnmake" ]
+    then
+      rnmake_root=${value}
+    fi
+  fi
+done
+
+if [ ! -d ${rnmake_root} ]
+then
+  fatal 8 "'${rnmake_root}' Cannot access directory"
+elif [ ! -d ${rnmake_root}/Arch ]
+then
+  fatal 8 "'${rnmake_root}/Arch' Cannot access directory"
+fi
+
+cd ${rnmake_root}/Arch
+
+# showBanner
+showBanner()
+{
+	printf "${color_banner}"
+  printf "%-20s%-20s%-s\n" "tag" "arch" "arch_fqname"
+  printf "%-20s%-20s%-s\n" "---" "----" "-----------"
+	printf "${color_end}"
+}
+
+# getRealArch arch_file arch_var
+getRealArch()
+{
+  arch=$(grep 'RNMAKE_ARCH\s*=\s*\S*' ${1})
+  arch_fqname=$(grep 'RNMAKE_ARCH_FQNAME\s*=\s*\S*' ${1})
+  if [ ! -z "${arch}" ]
+  then
+    arch=${arch#*=[ \t]*}
+  fi
+  if [ ! -z "${arch_fqname}" ]
+  then
+    arch_fqname=${arch_fqname#*=[ \t]*}
+  fi
+  eval ${2}[0]="${arch}"
+  eval ${2}[1]="${arch_fqname}"
+}
+
+if ${longformat}
+then
+  showBanner
+fi
+
+declare -a arch_real
+
+for arch_file in Arch.*.mk
+do
+  arch_tag="${arch_file%%.mk}"
+  arch_tag="${arch_tag##Arch.}"
+  if ${longformat}
+  then
+    getRealArch ${arch_file} arch_real
+    printf "%-20s%-20s%-s\n" ${arch_tag} "${arch_real[0]}" "${arch_real[1]}"
+  else
+    printf "${arch_tag} "
+  fi
+done
+
+printf "\n"
+
+exit 0

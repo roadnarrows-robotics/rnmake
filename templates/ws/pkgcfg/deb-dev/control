@@ -1,0 +1,8 @@
+Package:@PKG_NAME@-dev
+Version: @RT_VERSION@
+Section: devel
+Priority: optional
+Architecture: @RT_ARCH@
+Depends:
+Maintainer: @PKG_AUTHOR@ <@PKG_EMAIL@>
+Description: @PKG_NAME@ development package.

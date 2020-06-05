@@ -1,0 +1,7 @@
+/*! \file
+
+\page page_libs Libraries
+\section apps_pleistocene libpleistocene
+\verbinclude @WS@/src/libpleistocene/README.md
+
+*/ // end comment block

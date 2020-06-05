@@ -1,0 +1,7 @@
+Package:@PKG_NAME@-doc
+Version: @RT_VERSION@
+Section: doc
+Priority: optional
+Architecture: @RT_ARCH@
+Maintainer: @PKG_AUTHOR@ <@PKG_EMAIL@>
+Description: @PKG_NAME@ documentation package.

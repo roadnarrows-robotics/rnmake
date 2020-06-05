@@ -1,0 +1,897 @@
+#!/usr/bin/env python3
+#
+# File:
+#   rnnew_workspace
+#
+# Usage:
+#   rnnew_workspace [OPTIONS] [VAR=VAL [VAR=VAL...]] [PKG_NAME] [PREFIX]
+#   rnnew_workspace --help
+#
+# Description:
+#   Make a new workspace.
+#
+# /*! \file */
+# /*! \cond RNMAKE_DOXY*/
+
+import sys
+import os
+import io
+import time
+import shutil
+import fnmatch
+import subprocess
+from collections import OrderedDict
+import re
+import getopt
+
+RNMAKE_ROOT = os.path.realpath(os.path.join(os.path.dirname(__file__), '..'))
+RN_PYMODS = os.path.join(RNMAKE_ROOT, 'utils')
+RN_TEMPLATE_WS = os.path.join(RNMAKE_ROOT, 'templates/ws')
+
+# fix up python path
+sys.path.insert(0, os.path.realpath(RN_PYMODS))
+
+try:
+  from rnmake.color import ColorfulOutput
+  from rnmake.atat import AtAt, AtAtError
+except ImportError as e:
+  print(f"{e}: Expeceted to be found in '{RN_PYMODS}'")
+  sys.exit(8)
+except AttributeError as e:
+  print(f"{e}")
+  sys.exit(8)
+
+# -----------------------------------------------------------------------------
+class QandA:
+  """ Question and Answer class. """
+  def __init__(self, name, default_value, required, ps,
+               cb_answered, cb_process, cb_default):
+    self.name         = name
+    self.value        = default_value
+    self.required     = required
+    self.ps           = ps 
+    self.cb_answered  = cb_answered
+    self.cb_process   = cb_process
+    self.cb_default   = cb_default
+    self.ok           = False
+
+# -----------------------------------------------------------------------------
+class QandASession:
+  """ Question and answer session class. """
+
+  def __init__(self, out):
+    self.out = out
+    self.qna = OrderedDict()
+
+  def __contains__(self, key):
+    return key in self.qna
+
+  def __getitem__(self, key):
+    return self.qna[key]
+
+  def __iter__(self):
+    return iter(self.qna)
+
+  def __len__(self):
+    return len(self.qna)
+
+  def items(self):
+    return self.qna.items()
+
+  def keys(self):
+    return self.qna.keys()
+
+  def values(self):
+    return self.qna.values()
+
+  def add(self, name, default_value=None, required=True, ps='',
+                cb_answered=None, cb_process=None, cb_default=None):
+    """
+    Add question to QnA session.
+
+    Parameters:
+      name            (Variable) name of the question.
+      default_value   Default response value.
+      required        Value is [not] required. That is, the response cannot be
+                      empty or 'none'.
+      ps              Prompt string.
+      cb_answered     Is the question answered? callback.
+      cb_process      Process response callback.
+      cb_default      Set default at q and a exectuion
+    """
+    self.qna[name] = QandA(name, default_value, required, ps, cb_answered,
+                           cb_process, cb_default)
+
+  def prompt(self, qna):
+    if qna.cb_default:
+      qna.value = qna.cb_default(self, qna)
+    ss = io.StringIO()
+    if qna.required:
+      mark = 'R '
+    else:
+      mark = '  '
+    if qna.value:
+      self.out.cprint('color_punct', mark,
+                      'color_ps', f"{qna.ps}",
+                      'color_punct', ' [',
+                      'color_dft', f"{qna.value}",
+                      'color_punct', '] ', file=ss, end='')
+    else:
+      self.out.cprint('color_punct', mark,
+                      'color_ps', f"{qna.ps}",
+                      'color_punct', ': ', file=ss, end='')
+    return ss.getvalue()
+
+  def error(self, emsg):
+    self.out.cprint('error', f"error: {emsg}")
+
+  def answered(self, qna):
+    """ Is the question answered? """
+    if qna.cb_answered:
+      qna.ok = qna.cb_answered(self, qna)
+    return qna.ok
+
+  def process(self, qna, rsp):
+    """ Process the response to a question. """
+    # use default if empty response
+    if not rsp:
+      rsp = qna.value
+    # empty/none (default) response
+    if not rsp or rsp.lower() == 'none':
+      # required
+      if qna.required:
+        if not rsp:
+          self.error(f"required {qna.name} value cannot be empty")
+        else:
+          self.error(f"required {qna.name} value cannot be 'none'")
+        qna.ok = False
+      # optional
+      else:
+        qna.value = None
+        qna.ok = True
+    # process response
+    elif qna.cb_process:
+      qna.ok = qna.cb_process(self, qna, rsp)
+    # copy verbatim 
+    else:
+      qna.value = rsp
+      qna.ok = True
+    return qna.ok
+
+# -----------------------------------------------------------------------------
+class UsageError(Exception):
+  """ Command-Line Options UsageError Exception Class. """
+  def __init__(self, msg):
+    self.msg = msg
+
+# -----------------------------------------------------------------------------
+class Application:
+  """ Application class. """
+
+  def __init__(self):
+    self.out    = ColorfulOutput()
+    self.atat   = AtAt(out=self.out)
+    self.info   = {}
+    self.ws     = {}
+    self.sess   = QandASession(out=self.out)
+    colors = [('lightblue', 'color_ps'), ('lightgreen', 'color_dft'),
+              ('lightblue', 'color_var'), ('lightgreen', 'color_val'),
+              ('brown', 'color_punct'), ('lightgray', 'color_banner')]
+    for color, syn in colors:
+      self.out.synonym(color, syn)
+
+  def collect_info(self):
+    self.banner('Collect Information')
+    self.out.cprint('color_banner', """
++ A leading 'R' marks required, any default value is in [value] brackets.
++ Press <enter> to accept any default value.
++ Respond with 'none' to disable any optional feature.
++ For yes answers, 'y', 'yes', 't', 'true',  '1' are equivalent.
++ For no answers,  'n', 'no',  'f', 'false', '0' are equivalent.
+""")
+
+    self.info['pkg_name'] = self.kwargs['pkg_name']
+    self.info['prefix'] = self.kwargs['prefix']
+    self.info.update(self.kwargs['atat'])
+
+    self.queue_questions()
+
+    for qna in self.sess.values():
+      while not self.sess.answered(qna):
+        try:
+          rsp = input(self.sess.prompt(qna))
+        except (EOFError, KeyboardInterrupt):
+          self.fatal(8, "New workspace creation aborted")
+        rsp = rsp.strip()
+        if self.sess.process(qna, rsp):
+          self.info[qna.name] = qna.value
+
+  def queue_questions(self):
+    tpl_img_dir = os.path.join(RN_TEMPLATE_WS, 'docs/images')
+
+    # package questions
+    self.sess.add('pkg_name',
+        default_value=self.info['pkg_name'],
+        ps='package name',
+        cb_process=self.rsp_pkg_name)
+    self.sess.add('prefix',
+        default_value=self.info['prefix'],
+        ps='workspace prefix path',
+        cb_process=self.rsp_workspace_name)
+    self.sess.add('pkg_ver',
+        default_value=self.info.get('pkg_ver', '0.1.0'),
+        ps='package dotted version',
+        cb_process=self.rsp_dotted_ver)
+    self.sess.add('pkg_desc',
+        default_value=self.info.get('pkg_desc', ''),
+        required=False,
+        ps='package one line description')
+    self.sess.add('pkg_kw',
+        default_value=self.info.get('pkg_kw', ''),
+        required=False,
+        ps='package list of keywords')
+    self.sess.add('pkg_author',
+        default_value=self.info.get('pkg_author', 'Thag B. Caveman'),
+        required=False,
+        ps='package author(s)')
+    self.sess.add('pkg_owner',
+        default_value=self.info.get('pkg_owner', 'Ooga Ooga LLC'),
+        required=False,
+        ps='package owners(s)')
+    self.sess.add('pkg_url',
+        default_value=self.info.get('pkg_url', 'https://oogaooga.bce'),
+        required=False,
+        ps='package url')
+    self.sess.add('pkg_email',
+        default_value=self.info.get('pkg_email', 'bugsmush@bambam.net'),
+        required=False,
+        ps='package email address(s)')
+    self.sess.add('pkg_license',
+        default_value=self.info.get('pkg_license', 'AS-IS'),
+        required=False,
+        ps='package license')
+    self.sess.add('pkg_logo',
+        default_value=self.info.get('pkg_logo',
+          os.path.join(tpl_img_dir, 'glyptodon_logo.png')),
+        required=False,
+        ps='package logo image',
+        cb_process=self.rsp_isfile)
+    self.sess.add('pkg_favicon',
+        default_value=self.info.get('pkg_favicon',
+          os.path.join(tpl_img_dir, 'favicon.png')),
+        required=False,
+        ps='package html favicon',
+        cb_process=self.rsp_isfile)
+
+    # product questions
+    self.sess.add('product',
+        default_value=self.info.get('product', 'Glyptodon Ooga Ooga'),
+        ps='product name',
+        cb_default=lambda sess, qna: self.info.get('product',
+                                                   self.info['pkg_name']))
+
+    # organization questions
+    self.sess.add('org',
+        default_value=self.info.get('org', 'Ooga Ooga'),
+        required=False,
+        ps='organization')
+    self.sess.add('org_fq',
+        default_value=self.info.get('org_fq', 'Ooga Ooga LLC'),
+        required=False,
+        ps='fully-qualified organization name')
+    self.sess.add('org_abbrev',
+        default_value=self.info.get('org_abbrev', 'OO'),
+        required=False,
+        ps='organization abbreviation')
+    self.sess.add('org_url',
+        default_value=self.info.get('org_url', 'https://oogaooga.bce'),
+        required=False,
+        ps='organization url')
+    self.sess.add('org_logo',
+        default_value=self.info.get('org_logo',
+          os.path.join(tpl_img_dir, 'club_logo.png')),
+        required=False,
+        ps='organization logo image',
+        cb_process=self.rsp_isfile)
+    self.sess.add('org_favicon',
+        default_value=self.info.get('org_favicon',
+          os.path.join(tpl_img_dir, 'favicon.png')),
+        required=False,
+        ps='organization html favicon',
+        cb_process=self.rsp_isfile)
+
+    # workspace questions
+    self.sess.add('pgm_c',
+        default_value=self.info.get('pgm_c', 'yes'),
+        required=False,
+        ps='include c application example {yes or no}',
+        cb_process=self.rsp_yesno)
+    self.sess.add('pgm_cxx',
+        default_value=self.info.get('pgm_cxx', 'yes'),
+        required=False,
+        ps='include c++ application example {yes or no}',
+        cb_process=self.rsp_yesno)
+    self.sess.add('lib_c',
+        default_value=self.info.get('lib_c', 'yes'),
+        required=False,
+        ps='include c library example {yes or no}',
+        cb_process=self.rsp_yesno)
+    self.sess.add('python',
+        default_value=self.info.get('python', 'yes'),
+        required=False,
+        ps='include python example {yes or no}',
+        cb_process=self.rsp_yesno)
+    self.sess.add('doxy_enabled',
+        default_value=self.info.get('doxy_enabled', 'yes'),
+        required=False,
+        ps='enable doxygen documentation {yes or no}',
+        cb_process=self.rsp_yesno)
+    self.sess.add('pydoc_enabled',
+        default_value=self.info.get('pydoc_enabled', 'yes'),
+        required=False,
+        ps='enable pydoc documentation {yes or no}',
+        cb_process=self.rsp_yesno)
+
+  def rsp_pkg_name(self, sess, qna, rsp):
+    if not self.info.get('product'):
+      self.info['product'] = rsp
+    qna.value = rsp.replace(' ', '-')
+    return True
+
+  def rsp_workspace_name(self, sess, qna, rsp):
+    ws = os.path.join(rsp, sess['pkg_name'].value)
+    if os.path.exists(ws):
+      sess.error(f"'{ws}' already exists")
+      return False
+    else:
+      qna.value = rsp
+      self.info['ws'] = ws
+      return True
+
+  def rsp_dotted_ver(self, sess, qna, rsp):
+    mmr = ['pkg_ver_major', 'pkg_ver_minor', 'pkg_ver_release']
+    for k in mmr:
+      self.info[k] = 0
+    dots = rsp.split('.')
+    for i in range(len(dots)):
+      v = dots[i]
+      try:
+        n = int(v)
+      except ValueError:
+        sess.error(f"'{v}' not a number")
+        return False
+      if n >= 0:
+        self.info[mmr[i]] = v
+      else:
+        sess.error(f"'{v}' must be >= 0")
+        return False
+    qna.value = f"{self.info[mmr[0]]}.{self.info[mmr[1]]}.{self.info[mmr[2]]}"
+    return True
+
+  def rsp_isfile(self, sess, qna, rsp):
+    if os.path.isfile(rsp):
+      qna.value = rsp
+      return True
+    else:
+      sess.error(f"'{rsp}' does not exist")
+      return False
+
+  def rsp_yesno(self, sess, qna, rsp):
+    if isinstance(rsp, bool):
+      qna.value = rsp
+      return True
+    yn = rsp.lower()
+    if yn in ['y', 'yes', 't', 'true', '1']:
+      qna.value = True
+      return True
+    elif yn in ['n', 'no', 'f', 'false', '0']:
+      qna.value = False
+      return True
+    else:
+      sess.error('yes or no')
+      return False
+
+  def postprocess_info(self):
+    # ws tree
+    ws = self.info['ws']
+
+    # upfronts
+    mk_doxy_dir = '$(RNMAKE_PKG_ROOT)/pkgcfg/doxy'
+    mk_img_dir  = '$(RNMAKE_PKG_ROOT)/docs/images'
+    mk_tpl_dir  = '$(RNMAKE_PKG_ROOT)/pkgcfg/templates'
+
+    # organization
+    if self.info['org_fq']:
+      org = self.info['org_fq']
+    elif self.info['org']:
+      org = self.info['org']
+    elif self.info['pkg_owner']:
+      org = self.info['pkg_owner']
+    else:
+      org = ''
+    self.info['org_fq'] = org
+    if not self.info['org_abbrev']:
+      self.info['org_abbrev'] = org[:3].strip().upper()
+
+    # package
+    self.info['pkg_name_fq'] = self.info['pkg_name'] + '-' \
+                                + self.info['pkg_ver']
+    add_kw = ''
+    for k in ['org', 'org_abbrev', 'product']: 
+      if self.info[k]:
+        add_kw = ', ' + self.info[k]
+    if not self.info['pkg_kw']:
+      if len(add_kw) > 0:
+        self.info['pkg_kw'] = add_kw[2:]
+    else:
+      self.info['pkg_kw'] += add_kw
+    self.info['pkg_home_page'] = os.path.join(mk_tpl_dir, 'home.html.tpl')
+    if not self.info['pkg_desc']:
+      self.info['pkg_desc'] = \
+          f"{org} {self.info['pkg_name']} v{self.info['pkg_ver']}"
+    self.info['license_file'] = 'LICENSE'
+
+    # identifiers
+    pkg = self.idify(self.info['pkg_name']).upper()
+    self.info['id_pkg'] =  pkg
+    self.info['id_pkg_ws'] = pkg + '_WORKSPACE'
+    self.info['id_org'] = self.idify(self.info['org']).upper()
+    self.info['id_prod'] = self.idify(self.info['product']).upper()
+
+    # logo
+    if self.info['pkg_logo']:
+      self.info['logo'] = os.path.basename(self.info['pkg_logo'])
+    elif self.info['org_logo']:
+      self.info['logo'] = os.path.basename(self.info['org_logo'])
+
+    # favicon
+    if self.info['pkg_favicon']:
+      self.info['favicon'] = os.path.basename(self.info['pkg_favicon'])
+    elif self.info['org_favicon']:
+      self.info['favicon'] = os.path.basename(self.info['org_favicon'])
+
+    # doxygen
+    if self.info['doxy_enabled']:
+      self.info['doxy_enabled'] = 'y'
+      self.info['doxy_dir'] = mk_doxy_dir
+      self.info['doxy_conf_file'] = os.path.join(mk_doxy_dir, 'doxy.conf')
+      self.info['doxy_header_file'] = os.path.join(mk_doxy_dir,
+                                                   'doxy_header.html')
+      self.info['doxy_footer_file'] = os.path.join(mk_doxy_dir,
+                                                   'doxy_footer.html')
+      self.info['doxy_css_file'] = os.path.join(mk_doxy_dir, 'doxy.css')
+      self.info['doxy_images_dir'] = mk_img_dir
+      self.info['doxy_logo_image'] = '$(RNMAKE_PKG_LOGO)'
+
+      # doxygen aliases (see doxy.conf)
+      pre = 'h_'
+      self.info['doxy_alias_pkg'] = pre + self.info['id_pkg'].lower()
+      self.info['doxy_alias_org'] = pre + self.info['id_org'].lower()
+      self.info['doxy_alias_prod'] = pre + self.info['id_prod'].lower()
+
+    else:
+      self.info['doxy_enabled'] = ''
+
+    # pydoc
+    if self.info['pydoc_enabled']:
+      self.info['pydoc_enabled'] = 'y'
+      self.info['pydoc_index_file'] = os.path.join(mk_tpl_dir, 'pydoc.html.tpl')
+    else:
+      self.info['pydoc_enabled'] = ''
+
+    # versions
+    self.info['python_ver'] = \
+        f"{sys.version_info.major}.{sys.version_info.minor}"
+
+    # run-time atat deferred evaluation variables.
+    self.info['rt_version'] = '@VERSION@'
+    self.info['rt_arch'] = '@ARCH@'
+    self.info['rt_prefix'] = '@PREFIX@'
+
+  def merge_atat_vars(self):
+    """ Merge info with atat variables. The varible name is upper-cased. """
+    tvars = {}
+    for k, v in self.info.items():
+      if v is not None:
+        tvars[k.upper()] = str(v)
+      else:
+        tvars[k.upper()] = ''
+    self.atat.merge_vars(tvars)
+
+  def set_atat_var(self, var, val):
+    """ Add varibles to atat variables. The varible name is upper-cased. """
+    self.atat.set_var(var.upper(), val)
+
+  def idify(self, s):
+    """ Make string into valid source code identifier. """
+    t = ''
+    for c in s:
+      if c.isidentifier():
+        t += c
+      else:
+        t += '_'
+    return t
+
+  def summary(self):
+    self.banner('Workspace Summary')
+    for k,v in self.info.items():
+      self.out.cprint('color_var', f"{k:<16}",
+                      'color_punct', ' = ',
+                      'color_val', f"{v}")
+
+  def create_workspace(self):
+    self.banner('Creating Workspace')
+
+    # set key workspace directory and file variables
+    self.ws_vars()
+
+    # copy full template tree
+    self.status(f"Copying template tree {RN_TEMPLATE_WS}")
+    shutil.copytree(RN_TEMPLATE_WS, self.ws['root'], ignore=self.ignore)
+
+    # copy external source files
+    self.copy_src()
+
+    # rename directories and files
+    self.rename()
+
+    # prune tree
+    self.prune()
+
+    # final fixups
+    self.final_fixups()
+
+    # parse templates in tree
+    self.parse_ws_templates()
+
+    # clone rnmake package
+    self.git_clone_rnmake()
+
+  def ignore(self, src, names):
+    """ Ignore set of source names. """
+    ig = []
+    for fname in names:
+      if fname in ['__pycache__', ]:
+        ig += [fname]
+    return ig
+
+  def ws_vars(self):
+    self.ws['root'] = self.info['ws']
+    self.ws['rnmake_dir'] = os.path.join(self.ws['root'], 'rnmake')
+    self.ws['pkgcfg_dir'] = os.path.join(self.ws['root'], 'pkgcfg')
+    self.ws['sh_dir'] = os.path.join(self.ws['root'], 'share')
+    self.ws['docs_dir'] = os.path.join(self.ws['root'], 'docs')
+
+    # prunables
+    self.ws['src_dir'] = os.path.join(self.ws['root'], 'src')
+    self.ws['inc_dir'] = os.path.join(self.ws['src_dir'], 'include')
+    self.ws['lib_c_dir'] = os.path.join(self.ws['src_dir'], 'libpleistocene')
+    self.ws['pgm_c_dir'] = os.path.join(self.ws['src_dir'], 'stones')
+    self.ws['pgm_cxx_dir'] = os.path.join(self.ws['src_dir'], 'clan')
+    self.ws['py_dir'] = os.path.join(self.ws['src_dir'], 'python')
+    self.ws['scripts_dir'] = os.path.join(self.ws['src_dir'], 'scripts')
+
+  def copy_src(self):
+    self.status("Copying external sources...")
+    img_list = ['pkg_logo', 'pkg_favicon', 'org_logo', 'org_favicon']
+    dst_list = [os.path.join(self.ws['docs_dir'], 'images'),
+                os.path.join(self.ws['py_dir'], 'pkg_name/images')]
+    for img in img_list:
+      if self.info[img]:
+        self.status(f"  {self.info[img]}")
+        for dst in dst_list:
+          shutil.copy(self.info[img], dst)
+
+  def rename(self):
+    # package file names to rename (order is important)
+    pkg_names = [
+      os.path.join(self.ws['inc_dir'], 'pkg_name/pkg_name.h'),
+      os.path.join(self.ws['inc_dir'], 'pkg_name'),
+      os.path.join(self.ws['sh_dir'], 'etc/ld.so.conf.d/pkg_name.conf'),
+      os.path.join(self.ws['sh_dir'], 'etc/pkg_name/pkg_name.conf'),
+      os.path.join(self.ws['sh_dir'], 'etc/pkg_name'),
+      os.path.join(self.ws['sh_dir'], 'etc/profile.d/pkg_name.sh'),
+      os.path.join(self.ws['sh_dir'], 'lib/cmake/pkg_name-config.cmake'),
+      os.path.join(self.ws['py_dir'], 'pkg_name')
+    ]
+
+    # path/to/[prefix]pkg_name[suffix] --> path/to/[prefix]PKG_NAME[suffix]
+    for p in pkg_names:
+      f = os.path.basename(p)
+      d = os.path.dirname(p)
+      f = f.replace('pkg_name', self.info['pkg_name'])
+      q = os.path.join(d, f)
+      os.rename(p, q)
+
+    os.rename(os.path.join(self.ws['root'], 'git.ignore'),
+              os.path.join(self.ws['root'], '.gitignore'))
+    os.rename(os.path.join(self.ws['root'], 'git.modules'),
+              os.path.join(self.ws['root'], '.gitmodules'))
+
+  def prune(self):
+    self.status("Pruning workspace...")
+    cnt = 0
+    optfeat = [ ('pgm_c',   'pgm_c_dir'),
+                ('pgm_cxx', 'pgm_cxx_dir'),
+                ('python',  'py_dir'),
+                ('lib_c',   'lib_c_dir'), ]
+    for feat,featdir in optfeat:
+      if self.info[feat]:
+        cnt += 1
+      # c and c++ programs, plus python wrapper depends on library
+      elif cnt > 0 and feat == 'lib_c':
+        self.info[feat] = True
+        cnt += 1
+      else:
+        self.status(f"  {self.ws[featdir]}")
+        shutil.rmtree(self.ws[featdir])
+        del self.ws[featdir]
+        if feat == 'python':
+          py = os.path.join(self.ws['scripts_dir'], 'mammoth_thigh.py')
+          os.remove(py)
+
+    if cnt == 0:
+      self.status(f"  {self.ws['src_dir']}")
+      shutil.rmtree(self.ws['src_dir'])
+      del self.ws['src_dir']
+
+  def git_clone_rnmake(self):
+    if not self.kwargs['clone']:
+      return
+    repo = 'https://github.com/roadnarrows-robotics/rnmake'
+    cmd = ['git', 'clone', repo, self.ws['rnmake_dir']]
+    self.status(f"Cloning {repo}...")
+    completed = subprocess.run(cmd)
+    if completed.returncode != 0:
+      self.out.error(' '.join(cmd), 'cloning rnmake failed')
+    else:
+      self.status("Done")
+    # test rather than clone
+    #shutil.copytree(RNMAKE_ROOT, self.ws['rnmake_dir'])
+
+  def final_fixups(self):
+    if 'src_dir' in self.ws:
+      self.set_atat_var('top_subdirs',
+                             os.path.basename(self.ws['src_dir']))
+      src_list = ['lib_c_dir', 'pgm_c_dir', 'pgm_cxx_dir', 'py_dir',
+                  'scripts_dir']
+      subdirs = ' '.join([os.path.basename(self.ws[d]) \
+                          for d in src_list if d in self.ws])
+      self.set_atat_var('src_subdirs', subdirs)
+      if self.info['python']:
+        self.set_atat_var('python_scripts', 'mammoth_thigh.py')
+      else:
+        self.set_atat_var('python_scripts', '')
+
+  def parse_ws_templates(self):
+    """ Update workspace regular files with gleaned workspace information. """
+    self.debug_atat()
+
+    self.status("Scanning for templates...")
+    file_excludes = [
+      '*.png', '*.jpg', '*.tiff', '*.svg', '*.gif', '*.tpl',
+      '*.pdf', '*.ps', '*.tar', '*.gz',
+    ]
+    for root, dirlist, filelist in os.walk(self.info['ws']):
+      for fname in filelist:
+        if not self.exclude(file_excludes, fname):
+          fpath = os.path.join(root, fname)
+          self.status(f"  updating {fpath}")
+          self.atat.replace_in_file(fpath)
+
+  def exclude(self, patlist, fname):
+    for pat in patlist:
+      if fnmatch.fnmatch(fname, pat):
+        return True
+    return False
+
+  def epilog(self):
+    self.banner('Epilog')
+    self.out.cprint('color_banner', f"""\
+To test, run validation steps in 'Test.md'.
+
+Minimum Requirements:""")
+    self.out.cprint('color_banner', '  make 4.1')
+    if self.info['pgm_c'] or self.info['pgm_cxx'] or self.info['lib_c']:
+      self.out.cprint('color_banner', '  gcc 7.5')
+    if self.info['python']:
+      self.out.cprint('color_banner', """\
+  python 3.6
+  swig 3.0
+  libpython3.6m""")
+    if self.info['doxy_enabled'] == 'y':
+      self.out.cprint('color_banner', '  doxygen 1.8')
+    if self.info['pydoc_enabled'] == 'y':
+      self.out.cprint('color_banner', '  pydoc3')
+
+  def yes_or_no(self, ps):
+    print()
+    sess = QandASession(out=self.out)
+    sess.add('yn', ps=ps+' {yes or no}', cb_process=self.rsp_yesno)
+    qna = sess['yn']
+    while not sess.answered(qna):
+      try:
+        rsp = input(self.sess.prompt(qna))
+      except (EOFError, KeyboardInterrupt):
+        self.fatal(8, "New workspace creation aborted")
+      rsp = rsp.strip()
+      sess.process(qna, rsp)
+    return qna.value
+
+  def banner(self, title):
+    print()
+    self.out.cprint('color_banner', self.out.ul(title))
+
+  def status(self, what):
+    if self.kwargs['verbose']:
+      self.out.info(what)
+
+  def verbose(self, msg):
+    if self.kwargs['verbose']:
+      self.out.cprint('normal', msg)
+
+  def debug(self, what, *objs):
+    if self.kwargs['debug']:
+      self.out.debug(what, *objs)
+
+  def debug_atat(self):
+    if self.kwargs['debug']:
+      print()
+      from rnmake.atat import AtAtPrettyPrint
+      pretty = AtAtPrettyPrint(self.atat)
+      pretty.show_defined()
+
+  def fatal(self, ec, *emsgs, filename=None, line_num=0):
+    """
+    Show fatal message and exit.
+
+    Parameters:
+      ec        Exit code.
+      emsgs     Arguments to the message.
+      filename  Optional filename associated with I/O.
+      line_num  Option line number of filename.
+    """
+    self.out.iofatal(*emsgs, filename=filename, line_num=line_num)
+    sys.exit(ec)
+
+  def turn_off_color(self):
+    """ Disable color output. """
+    self.out.disable_color()
+
+  def print_usage_error(self, *args):
+    """ Print error usage message. """
+    emsg = ': '.join([f"{a}" for a in args])
+    if emsg:
+      print(f"{self.argv0}: error: {emsg}")
+    else:
+      print(f"{self.argv0}: error")
+    print(f"Try '{self.argv0} --help' for more information.")
+  
+  def print_help(self):
+    """ Print command-line help. """
+    print(f"""\
+Usage: {self.argv0} [OPTIONS] [VAR=VAL [VAR=VAL...]] [PKG_NAME] [PREFIX]
+       {self.argv0} --help
+
+Create a new workspace tree seeded with a standard set of rnmake files.
+
+Options:
+      --have-rnmake     Disable cloning rnmake git repository into the new
+                        workspace. Usaully this flag is set when rnmake is
+                        installed elsewhere and is used by multiple projects.
+
+      --debug           Enable grotesque amount of debugging output.
+
+      --no-color        Disable color output.
+
+      --verbose         Enable status and summary output.
+
+  -h, --help            Display this help and exit.
+
+Description:
+PKG_NAME
+Name of the new package. Any whitespace will be replaced with hyphens ('-').
+
+PREFIX
+Directory path prefix. Workspace tree will be created at PREFIX/PKG_NAME 
+directory.
+
+VAR=VAL
+The VAR=VAL arguments define additional name-value pairs to be used as working
+atat @VAR@ variables for template processing. The VAR name is case insensitive.
+""")
+
+  def get_options(self, argv):
+    """ Get main options and arguments. """
+    self.argv0 = os.path.basename(argv[0])
+
+    self.out.set_prefix(self.argv0)
+
+    # option defaults
+    kwargs = {}
+    kwargs['debug']     = False
+    kwargs['verbose']   = False
+    kwargs['color']     = True
+    kwargs['clone']     = True
+    kwargs['atat']      = {}
+    kwargs['pkg_name']  = None
+    kwargs['prefix']    = None
+
+    shortopts = "?h"
+    longopts  = ['help', 'debug', 'have-rnmake', 'no-color', 'verbose']
+
+    # parse command-line options
+    try:
+      try:
+        opts, args = getopt.getopt(argv[1:], shortopts, longopts=longopts)
+      except getopt.error as msg:
+        raise UsageError(msg)
+      for opt, optarg in opts:
+        if opt in ('-h', '--help', '-?'):
+          self.print_help()
+          sys.exit(0)
+        elif opt in ('--no-color'):
+          kwargs['color'] = False
+          self.turn_off_color()
+        elif opt in ('--have-rnmake'):
+          kwargs['clone'] = False
+        elif opt in ('--debug'):
+          kwargs['debug'] = True
+        elif opt in ('--verbose'):
+          kwargs['verbose'] = True
+    except UsageError as err:
+      self.print_usage_error(err.msg)
+      sys.exit(2)
+
+    # non-nvp arguments
+    nargs = []
+
+    # name=value pair regex
+    reNvp = re.compile('([a-zA-Z_]\w*)=(.+)')
+    
+    # name=value arguments
+    for arg in args:
+      g = reNvp.match(arg)
+      if g is not None and len(g.groups()) == 2:
+        kwargs['atat'][g[1].lower()] = g[2]
+      else:
+        nargs.append(arg)
+
+    # package name, no spaces
+    if len(nargs) >= 1:
+      kwargs['pkg_name'] = nargs[0].replace(' ', '-')
+
+    # workspace prefix path
+    if len(nargs) >= 2:
+      kwargs['prefix'] = nargs[1]
+
+    return kwargs
+
+  #--
+  def main(self, argv):
+    """ main """
+    self.kwargs = self.get_options(argv)
+
+    self.debug('kwargs =', self.kwargs)
+
+    self.collect_info()
+
+    self.postprocess_info()
+
+    self.debug('info =', self.info)
+
+    self.merge_atat_vars()
+
+    self.summary()
+
+    if self.yes_or_no("Create workspace"):
+      self.create_workspace()
+      self.epilog()
+
+    return 0
+
+#------------------------------------------------------------------------------
+app = Application()
+sys.exit( app.main(sys.argv) )
+
+#/*! \endcond RNMAKE_DOXY */

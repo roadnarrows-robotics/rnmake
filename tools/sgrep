@@ -1,0 +1,293 @@
+#!/bin/bash
+#
+# File:
+#   sgrep
+#
+# Usage:
+#   sgrep [OPTION]... PATTERN [-- [GREPOPTS]]
+#   sgrep --help
+#
+# Description:
+#   Greps source files in directory for PATTERN.
+#
+
+argv0=$(basename $0)
+
+# canned source file type patterns
+declare -A canned_src
+canned_src['c']="'*.[cCh]' '*.cxx' '*.cpp' '*.[ch][ch]' '*.hpp'"
+canned_src['doxy']="'*.doxy' '*.dxy'"
+canned_src['html']="'*.htm' '*.html' '*.xml' '*.css' '*.dtd'" 
+canned_src['java']=="'*.java'"
+canned_src['make']="'[Mm]akefile' '*.mk' 'CMakeLists.txt' '*.cmake'"
+canned_src['markdown']="'*.md'"
+canned_src['perl']="'*.pl'"
+canned_src['python']="'*.py'"
+canned_src['shell']="'*.sh'"
+canned_src['swig']="'*.i'"
+canned_src['tcl']="'*.tcl'"
+canned_src['tk']="'*.tk'"
+canned_src['yaml']="'*.json' '*.yaml' '*.yml'"
+
+#for src in ${!canned_src[@]}
+#do
+#  echo 'DBG:' ${src} '::=' ${canned_src[${src}]}
+#done
+
+#echo 'DBG:' ${!canned_src[@]}
+#echo 'DBG:' ${canned_src[@]}
+
+# directories to exclude in search
+excludes="/.git*|/.svn|/obj|/.deps|/dist|/loc"
+
+# defaults
+grep_color="--color=always"
+topdir='.'
+
+# ansi colors
+color_pre="\033["
+color_post="\033[0m"
+color_red="0;31m"
+color_green="0;32m"
+color_yellow="0;33m"
+color_cyan="0;36m"
+color_gray="1;30m"
+color_bold_red="1;31m"
+
+# colors used
+color_info="${color_pre}${color_green}"
+color_warn="${color_pre}${color_yellow}"
+color_error="${color_pre}${color_red}"
+color_fatal="${color_pre}${color_bold_red}"
+color_banner="${color_pre}${color_cyan}"
+color_end=${color_post}
+
+# turnOffColor
+turnOffColor()
+{
+  color_info=
+  color_warn=
+  color_error=
+  color_fatal=
+  color_banner=
+  color_end=
+  grep_color="--color=never"
+}
+
+# showInfo msg [msg...]
+showInfo()
+{
+  printf "${color_info}${*}${color_end}\n"
+}
+
+# showWarning wmsg [wmsg...]
+showWarning()
+{
+  printf "${argv0}: ${color_warn}${*}${color_end}\n" >&2
+}
+
+# showError emsg [emsg...]
+showError()
+{
+  printf "${argv0}: ${color_error}${*}${color_end}\n" >&2
+}
+
+# fatal exitcode emsg
+fatal()
+{
+  printf "${argv0}: ${color_fatal}${2}${color_end}\n" >&2
+  exit ${1}
+}
+
+bold_line='::-::-::-::-::-::-::-::-::-::-::-::-::-::-::-::-::-::-::-::-::-::-::-::-::-::-::' 
+
+# showBanner
+showBanner()
+{
+	printf "\n${color_banner}${bold_line}\n"
+  printf -- "${1}\n"
+	printf "${bold_line}${color_end}\n\n"
+}
+
+# callHelp
+callHelp()
+{
+  cat <<EOH
+Usage: ${argv0} [OPTION]... PATTERN [-- [GREPOPTS]]
+       ${argv0} --help
+
+Greps source files in [current] directory for PATTERN.
+
+The list of source types to search are built from the canned and user defined
+options.
+
+Options:
+  --no-color      Disable color output. Default: colors are enabled.
+
+  --no-banner     Disable banner output. Default: print banner.
+
+  -d, --directory Start search in directory. Default: '.' current directory.
+
+  --help          Print this help and exit.
+
+Source type options:
+  -c, --c     C and C++ files (default)
+              c ::= ${canned_src['c']}
+
+  --doxy      Doxygen files
+              doxy ::= ${canned_src['doxy']}
+
+  --html      HTML files
+              html ::= ${canned_src['html']}
+
+  -j, --java  Java files
+              java ::= ${canned_src['java']}
+
+  --make      Makefiles
+              make ::= ${canned_src['make']}
+
+  --markdown  Markdown Files
+              markdown ::= ${canned_src['markdown']}
+
+  --perl      Perl files
+              perl ::= ${canned_src['perl']}
+
+  -p, python  Python files
+              python ::= ${canned_src['python']}
+
+  --shell     Shell files
+              shell ::= ${canned_src['shell']}
+
+  --swig      Swig files
+              swig ::= ${canned_src['swig']}
+
+  --tcl       Tcl files
+              tcl ::= ${canned_src['tcl']}
+
+  --tk        Tk files
+              tk ::= ${canned_src['tk']}
+
+  --yaml      Human-readable data serialization files
+              yaml ::= ${canned_src['yaml']}
+
+  -s, --source=USRSRC
+              Files matching sh(1) pattern
+              USRSRC ::= SHPAT
+
+The ${argv0} command searches the [current] directory downward for PATTERN found
+in any files matching the source list. If no source list is specified, then
+the default is all C and C++ files. The PATTERN is interpreted as an extended
+regular expression.
+
+${argv0} is 'aware' of git, subversion, and RNMAKE hidden and auto-generated
+files and directories. These are excluded from search.
+
+Any GREPOPTS found are applied to evoking the grep command.
+
+Examples:
+  # Search C/C++ source for kuon pattern.
+  $ ${argv0} kuon
+
+  # Search C/C++ source for 'extern "C"' statements.
+  $ ${argv0} -d /prj/include '\"C\"'
+
+  # Search html, doxygen, and php files for beginning or ending unordered list
+  # tags.
+  $ ${argv0} --html --doxy --source='*.php' "'<ul>\|</ul>'"
+          
+  # Search C, C++, and python source for pattern -INF. Notice the -- to disable
+  # ${argv0} option parsing. The -i (ignore case) option is applied to grep.
+  $ ${argv0} -c -p '\\\\-INF' -- -i
+EOH
+  exit 0;
+}
+
+# long and short options
+longopts="no-color,no-banner,source:,directory:,help"
+shortopts="cjps:d:"
+
+# add canned source keys to long options
+for src in ${!canned_src[@]}
+do
+  longopts="${longopts},${src}"
+done
+
+# get the command-line options
+#   order returned: OPTIONS -- ARGS OTHER_OPTIONS
+OPTS=$(getopt --name ${argv0} -o "${shortopts}" --long "${longopts}" -- "${@}")
+
+if [ $? != 0 ]
+then
+  fatal 2 "Try '${argv0} --help' for more information."
+fi
+
+#echo "DBG: getopt return: ${OPTS}"
+
+eval set -- "${OPTS}"
+
+# if output is not a terminal, turn off color
+if [ ! -t 1 ]
+then
+  turnOffColor
+fi
+
+banner_opt='y'
+srclist=
+
+# process command-line options
+while true
+do
+  case "$1" in
+    --no-color) turnOffColor; shift;;
+    --no-banner) banner_opt='n'; shift;;
+    -s|--source) srclist="${srclist} ${2}"; shift 2;;
+    -d|--directory) topdir="${2}"; shift 2;;
+    -c) srclist="${srclist} ${canned_src['c']}"; shift;;
+    -j) srclist="${srclist} ${canned_src['java']}"; shift;;
+    -p) srclist="${srclist} ${canned_src['python']}"; shift;;
+    --help) callHelp; shift;;
+    --) shift; break;;
+    --?*) srclist="${srclist} ${canned_src[${1#--}]}"; shift;;
+    *)  break;;
+  esac
+done
+
+if [ $# -lt 1 ]
+then
+  showError "No PATTERN specified."
+  fatal 2 "Try '${argv0} --help' for more information."
+fi
+
+pattern="${1}"; shift
+
+#echo "DBG: post shift: ${@}"
+
+# default sources are c/c++
+if [ -z "${srclist}" ]
+then
+  srclist="${canned_src['c']}"
+fi
+
+#echo "DBG: srclist ::= ${srclist}"
+
+# build find name list
+findlist=
+for src in ${srclist}
+do
+  findlist="${findlist:+"${findlist} -or"} -name ${src}"
+done
+
+#echo "DBG: findlist ::= ${findlist}"
+
+grepopts="${@} -E ${pattern}"
+
+cmd="find -L ${topdir} \( ${findlist} \) -print \
+| grep -v -E \"${excludes}\" \
+| xargs grep -n ${grep_color} ${grepopts}"
+
+if [ "${banner_opt}" = 'y' ]
+then
+  showBanner "${cmd}"
+fi
+
+eval "${cmd}"

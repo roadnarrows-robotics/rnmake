@@ -1,0 +1,13 @@
+# aetherinstinct specific ignores
+# Lines that start with '#' are comments.
+
+# rnmake
+*.deps
+*/include/arch/*
+*/include/version.h
+*/loc
+*/dist/
+*/build/
+*/obj/
+*/wrap/
+*.egg-info

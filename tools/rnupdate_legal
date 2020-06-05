@@ -1,0 +1,939 @@
+#!/usr/bin/python3
+#
+# File:
+#   rnupdate_legal
+#
+# Usage:
+#   rnupdate_legal [OPTIONS] [VAR=VAL [VAR=VAL...]] LICENSE [TARGET]
+#   rnupdate_legal --help
+#
+# Description:
+#   Update package source file legal statements.
+#
+# Author:
+#   Robin D. Knight (robin.knight@roadnarrows.com)
+#
+# Copyright:
+#   (C) 2013-2020. RoadNarrows LLC.
+#   http://www.roadnarrows.com
+#   All Rights Reserved
+#
+# License:
+#   MIT
+#
+
+import os
+import sys
+import time
+import io
+import shutil
+import fnmatch
+import re
+import getopt
+
+from pprint import pprint
+
+# fix up python path
+sys.path.insert(0, os.path.realpath(os.path.dirname(__file__)+'/../utils'))
+
+try:
+  from rnmake.color import ColorfulOutput
+  from rnmake.atat import AtAt, AtAtError
+except ImportError as e:
+  print(f"{e}: Expeceted to be found in 'PREFIX/rnmake/utils/rnmake'")
+  sys.exit(8)
+except AttributeError as e:
+  print(f"{e}")
+  sys.exit(8)
+
+## Fixed excluded directory patterns
+Pat_excludes  = [
+    '.git', '.svn', 'obj', '.deps', 'dist', 'loc', 'gtest', 'tinyxml',
+    'build', 'build.*', 'rnmake', 'doxy', 'deb-doc', 'deb-dev', 'deb-src',
+    '*.egg*', '__pycache__'
+]
+
+## Legal tags
+LegalTagBegin    = 'LegalBegin'
+LegalTagEnd      = 'LegalEnd'
+reLegalTagBegin  = r'\\LegalBegin|@LegalBegin@|@LegalBegin'
+reLegalTagEnd    = r'\\LegalEnd|@LegalEnd@|@LegalEnd'
+
+## Source file types by file patterns
+FTypes = {
+  'c':          ['*.c', '*.h'],
+  'c++':        ['*.cxx', '*.cpp', '*.[cCh]', '*.[ch][ch]', '*.hpp'],
+  'python':     ['*.py'],
+  'java':       ['*.java'],
+  'javascript': ['*.js'],
+  'swig':       ['*.i'],
+  'shell':      ['*.sh', '*.bash', '.zsh'],
+  'make':       ['Makefile', 'makefile', '*.mk'],
+  'html':       ['*.html', '*.htm'],
+  'xml':        ['*.xml'],
+  'doxygen':    ['*.doxy', '*.dox'],
+}
+
+## Comment patterns regular expressions.
+#   sol:  start of line
+#   ws:   whitespace sequence
+#   eol:  end of line
+#   []:   optional
+#
+# Bang (!) comments are extensions for doxygen processing.
+reHash          = r'(^\s*#+\s+)'      # sol [ws] # ws
+reHashHashBang  = r'(^\s*##!\s+)'     # sol [ws] ##! ws
+reSlashSlash    = r'(^\s*//\s+)'      # sol [ws] // ws
+reSlashStar     = r'(^\s*/\*\s+)'     # sol [ws] /* ws
+reStarSlash     = r'(\s*\*\/$)'       # [ws] */ [ws] eol
+reSlashStarBang = r'(^\s*/\*!\s+)'    # sol [ws] /*! ws
+reXmlStart      = r'(^\s*<!--\s+)'    # sol [ws] <!-- ws
+reXmlEnd        = r'(\s*-->\s*$)'     # [ws] --> [ws] eol
+reTripleQuote   = r'(\s*"""\s*)'      # [ws] """ [ws]
+reSlashStarStar = r'(^\s*/\*/\*\s+)'  # [ws] /** ws
+reOr            = r'|'                # or connector
+
+## Compile comment regular expression objects for source ftypes.
+reoSlashSlash   = re.compile(reSlashSlash)
+reoSlashStar    = re.compile(reSlashStar+reOr+reSlashStarBang)
+reoStarSlash    = re.compile(reStarSlash)
+reoHash         = re.compile(reHash+reOr+reHashHashBang)
+reoTripleQuote  = re.compile(reTripleQuote)
+reoJavaStart    = re.compile(reSlashStar+reOr+reSlashStarStar)
+reoXmlStart     = re.compile(reXmlStart)
+reoXmlEnd       = re.compile(reXmlEnd)
+reoNoComment    = re.compile('')
+
+# Comment information by source ftype.
+#   line:           line comment re
+#   block_start:    block comment start re
+#   block_end:      block comment end re
+#   leader:         default leader mark for groomed license
+CommentInfo = {
+  'c': {
+    'line':         reoSlashSlash,
+    'block_start':  reoSlashStar,
+    'block_end':    reoStarSlash,
+    'leader':       '//',
+  },
+  'c++': {
+    'line':         reoSlashSlash,
+    'block_start':  reoSlashStar,
+    'block_end':    reoStarSlash,
+    'leader':       '//',
+  },
+  'python': {
+    'line':         reoHash,
+    'block_start':  reoTripleQuote,
+    'block_end':    reoTripleQuote,
+    'leader':       '#',
+  },
+  'java': {
+    'line':         reoSlashSlash,
+    'block_start':  reoJavaStart,
+    'block_end':    reoStarSlash,
+    'leader':       '//',
+  },
+  'javascript': {
+    'line':         reoSlashSlash,
+    'block_start':  reoSlashStar,
+    'block_end':    reoStarSlash,
+    'leader':       '//',
+  },
+  'swig': {
+    'line':         reoSlashSlash,
+    'block_start':  reoSlashStar,
+    'block_end':    reoStarSlash,
+    'leader':       '//',
+  },
+  'shell': {
+    'line':         reoHash,
+    'block_start':  reoNoComment,
+    'block_end':    reoNoComment,
+    'leader':       '#',
+  },
+  'make': {
+    'line':         reoHash,
+    'block_start':  reoNoComment,
+    'block_end':    reoNoComment,
+    'leader':       '#',
+  },
+  'html': {
+    'line':         reoNoComment,
+    'block_start':  reoXmlStart,
+    'block_end':    reoXmlEnd,
+    'leader':       ' -',
+  },
+  'xml': {
+    'line':         reoNoComment,
+    'block_start':  reoXmlStart,
+    'block_end':    reoXmlEnd,
+    'leader':       ' -',
+  },
+  'doxygen': {
+    'line':         reoNoComment,
+    'block_start':  reoXmlStart,
+    'block_end':    reoXmlEnd,
+    'leader':       ' -',
+  }
+}
+
+# 3 * 26 + 2 = 80
+_BoldLine='::-' * 26 + '::'
+
+# ------------------------------------------------------------------------------
+class Legalese:
+  # end of licence tag for (debug) printing
+  EOL_MARK = '      ~~ end-of-license ~~'
+
+  """ Source file legal container class. """
+  def __init__(self):
+    self.reset()
+
+  def __repr__(self):
+    return self.__str__()
+
+  def __str__(self):
+    return \
+      f"begin_tag_line = {self.begin_tag_line}\n" \
+      f"begin_tag_text = {self.begin_tag_text}" \
+      f"end_tag_line   = {self.end_tag_line}\n" \
+      f"end_tag_text   = {self.end_tag_text}" \
+      f"valid          = {self.valid}\n" \
+      f"license        = \n{''.join(self.license)}"\
+      f"{Legalese.EOL_MARK}"
+
+  def reset(self):
+    self.begin_tag_line = -1
+    self.begin_tag_text = ''
+    self.license        = []
+    self.end_tag_line   = -1
+    self.end_tag_text   = ''
+    self.valid          = False
+
+  def has_any_tags(self):
+    return self.begin_tag_line > 0 or self.end_tag_line > 0
+
+# ------------------------------------------------------------------------------
+class Stats:
+  """ Simple statistics container class. """
+  def __init__(self):
+    self.clear()
+
+  def __repr__(self):
+    return self.__str__()
+
+  def __str__(self):
+    return \
+      f"no_legal = {self.no_legal}\n" \
+      f"not_req  = {self.not_req}\n" \
+      f"required = {self.required}\n" \
+      f"updated  = {self.updated}\n" \
+      f"failed   = {self.failed}\n" \
+      f"total    = {self.total}"
+
+  def clear(self):
+    self.no_legal = 0
+    self.not_req  = 0
+    self.required = 0
+    self.updated  = 0
+    self.failed   = 0
+    self.total    = 0
+
+# ------------------------------------------------------------------------------
+class UsageError(Exception):
+  """ Command-line options UsageError Exception class. """
+  def __init__(self, msg):
+    self.msg = msg
+
+  def __str__(self):
+    return f"{msg}"
+
+# ------------------------------------------------------------------------------
+class Application():
+  """ Application class. """
+
+  def __init__(self):
+    """ Initializer. """
+    self.out      = ColorfulOutput()
+    self.atat     = AtAt(out=self.out)
+    self.env      = {}
+    self.template = None
+    self.stats    = Stats()
+
+  def get_env(self):
+    """ Get execution environment. """
+    self.env['rn_root']     = os.getenv('RNMAKE_ROOT')
+    self.env['rn_arch']     = os.getenv('RNMAKE_ARCH_DFT', 'x86_64')
+    self.env['rn_xprefix']  = os.getenv('RNMAKE_INSTALL_XPREFIX')
+    self.env['rn_prefix']   = os.getenv('RNMAKE_INSTALL_PREFIX')
+    self.env['rn_ws']       = os.getenv('RNMAKE_WORKSPACE', 'UNDEF')
+    self.env['cmd_dir']     = os.path.dirname(__file__)
+
+    self.debug('env = ', self.env)
+
+  def set_atat_vars(self):
+    env_vars = {}
+    for k,v in self.env.items():
+      if v:
+        env_vars[k.upper()] = v
+    self.atat.merge_vars(env_vars)
+    self.atat.merge_vars(self.kwargs['atat'])
+
+  def template_search_paths(self):
+    tpldir = 'templates/licenses'
+    pre = []
+    if self.env['rn_root']:
+      d = os.path.realpath(os.path.join(self.env['rn_root'], tpldir))
+      pre += [d]
+    if self.env['rn_ws']:
+      d = os.path.realpath(os.path.join(self.env['rn_ws'], 'rnmake', tpldir))
+      pre += [d]
+    for d in [os.path.realpath(os.path.join(self.env['cmd_dir'], '..')),
+              '/usr/share/rnmake',
+              '/usr/local/share/rnmake',
+              '/opt/share/rnmake']:
+      pre += [os.path.join(d, tpldir)]
+    paths = []
+    for p in pre:
+      if os.path.isdir(p) and p not in paths:
+        paths += [p]
+    return paths
+
+  def find_template(self):
+    """ Find the license template file. """
+    license = self.kwargs['license']
+
+    if os.path.exists(license):
+      return os.path.realpath(license)
+    elif os.path.basename(license) != license:
+      self.fatal(8, "Cannot find license template", filename=license)
+
+    if os.path.splitext(license)[1] == '.tpl':
+      fname = license
+    else:
+      fname = license + '.tpl'
+
+    look = self.template_search_paths()
+
+    for p in look:
+      template = os.path.join(p, fname)
+      if os.path.exists(template):
+        return os.path.realpath(template)
+
+    self.fatal(8, "Cannot find license template", filename=fname)
+
+  #
+  # \param licence  License tag.
+  #
+  def load_template(self):
+    """ Load the license template. """
+    try:
+      self.atat.load_template(self.template)
+    except AtAtError as e:
+      self.fatal(8, f"{e.msg}", filename=e.filename, line_num=e.line_num)
+
+  def classify_file_type(self, fname):
+    for ftype, patlist in FTypes.items():
+      for pat in patlist:
+        if fnmatch.fnmatch(fname, pat):
+          return ftype
+    return None
+
+  def groom_license(self, ftype, legalese, naked_license):
+    """
+    Groom new naked license with adorned comment sequences.
+
+    Note: The existing source license is assumed to be line commented or
+          embedded in a block comment section.
+
+    Parameters:
+      ftype           File source type.
+      legalese        Existing file legal block.
+      naked_license   New license without any source appropriate adorned
+                      comment sequences.
+
+    Returns:
+      New adorned license.
+    """
+    reline  = CommentInfo[ftype]['line']
+    reblock = CommentInfo[ftype]['block_start']
+    leader  = ''
+    g = reline.match(legalese.begin_tag_text)
+    if g is not None and len(g.groups()) >= 1:
+      leader = CommentInfo[ftype]['leader']
+    for line in legalese.license:
+      if line.strip():
+        g = reline.match(line)
+        if g is not None and len(g.groups()) >= 1:
+          leader = CommentInfo[ftype]['leader']
+    nlicense = []
+    for line in naked_license:
+      if not leader:                      # no leader mark
+        nlicense.append(line)
+      elif not line.strip():              # empty line
+        nlicense.append(leader+'\n')
+      else:                               # preface line with leader
+        nlicense.append(leader+' '+line)
+    return nlicense
+
+  ## \brief Add EULA of the given comment style to the dictionary of EULAs
+  #
+  # \param style    Comment style.
+  #
+  def addEulaStyle(self, style):
+    comment = CommentStyle[style]
+    self.m_Eula[style] = []
+    for line in self.m_Eula['plaintext']:
+      self.m_Eula[style].append(comment['middle']+line)
+    self.m_EulaTag[style] = { }
+    self.m_EulaTag[style]['begin'] = comment['middle']+"\\"+LegalTagBegin+"\n"
+    self.m_EulaTag[style]['end']   = comment['middle']+"\\"+LegalTagEnd+"\n"
+
+  ## \brief Find EULA block in open source file.
+  #
+  # \param fp   Open source file object.
+  #
+  # \return
+  # Returns a 4-tuple (found, nELineBegin, nELineEnd, eula) where:\n
+  # value | description
+  # ----- | -----------
+  # found       | True or False if EULA block is found.
+  # nELineBegin | The line number of the beginning of EULA block.
+  # nELineEnd   | The line number of the end of EULA block.
+  # eula        | The text holding the current file EULA found between the
+  #               lines numbers.
+  #
+  def find_legal(self, fname):
+    legalese = Legalese()
+
+    try:
+      with open(fname, "r") as f:
+        nbeg = -1   # begin tag line number
+        nend = -1   # end tag line number
+        n    = 0    # working line number (one based)
+    
+        # search file for legal block
+        for line in f:
+          n += 1
+    
+          # begin tag
+          if re.search(reLegalTagBegin, line):
+            nbeg = n
+            legalese.begin_tag_line  = nbeg
+            legalese.begin_tag_text = line
+          # end tag
+          elif re.search(reLegalTagEnd, line):
+            nend = n
+            legalese.end_tag_line  = nend
+            legalese.end_tag_text = line
+            break
+          # in legal block
+          elif nbeg > 0:
+            if n - nbeg <= 50:
+              legalese.license.append(line)
+            else:
+              self.out.iowarning(
+                  f"Legal block starting at line {nbeg} is too long (lawyers?) "
+                  f"or perhaps the '{LegalTagEnd}' tag is missing.",
+                  filename=fname, line_num=n)
+              return legalese
+    except OSError as e:
+      self.ioerror(e.strerror, e.filename)
+      self.stats.failed += 1
+      return legalese
+    
+    #
+    # final checks
+    #
+    
+    # no tags in file
+    if nend < 0 and nbeg < 0:
+      #self.out.iowarning(f"No '{LegalTagBegin},{LegalTagEnd}' tag pair found.",
+      #                   filename=fname)
+      self.stats.no_legal += 1
+      self.status('No legal', fname)
+    # no begin tag,pattern
+    elif nbeg < 0:
+      self.out.ioerror(f"The '{LegalTagBegin}' tag is missing or non-standard.",
+                       filename=fname)
+    # no end tag pattern
+    elif nend < 0:
+      self.out.ioerror(f"The '{LegalTagEnd}' tag is missing or non-standard.",
+                       filename=fname)
+    # begin pattern found but end position preceeds it
+    elif nend <= nbeg:
+      self.out.ioerror(
+            f"The '{LegalTagBegin}' tag at {nbeg} follows the '{LegalTagEnd}' "
+            f"tag at {nend}.", filename=fname)
+    # got a good legal block
+    else:
+      legalese.valid = True
+
+    return legalese
+ 
+  def equiv_licenses(self, new_license, cur_license):
+    """
+    Compare new and current licenses to check if equivalent.
+
+    Note: May fine-tune equivalence in future implemenation.
+
+    Parameters:
+      new_license   New adorned license generated from template.
+      cur_license   Current license in source file.
+    """
+    if len(new_license) != len(cur_license):
+      return False
+    return new_license == cur_license
+ 
+  def copy_update_to_tmp(self, fname, legalese, new_license):
+    """ Copy source file to temporary while updating the license. """
+    tmpfile = fname + '.tmp'
+    try:
+      with open(fname, 'r') as fsrc, open(tmpfile, 'w') as ftmp:
+        n = 1
+        # copy lines in source before license plus begin tag
+        while n <= legalese.begin_tag_line:
+          ftmp.write(fsrc.readline())
+          n += 1
+        # new license
+        for line in new_license:
+          ftmp.write(line)
+        # eat old license
+        while n < legalese.end_tag_line:
+          fsrc.readline()
+          n += 1
+        # copy lines in source from end tag after license
+        for line in fsrc:
+          ftmp.write(line)
+      mode = os.stat(fname).st_mode
+      os.chmod(tmpfile, mode)
+    except OSError as e:
+      self.ioerror(e.strerror, filename=e.filename, line_num=e.line_num)
+      return None
+    return tmpfile
+ 
+  ## \brief Check and, if needed, update source file EULA.
+  #
+  # \param f          Open source file object.
+  # \param style      Comment style.
+  # \param doupdate   Do [not] update.
+  # \param doforce    Do [not] force update on good files.
+  #
+  def update_legal(self, fname, ftype):
+    legalese = self.find_legal(fname)
+
+    self.debug(f"{fname} existing legalese =", legalese)
+
+    if not legalese.valid:
+      if legalese.has_any_tags():
+        self.stats.failed += 1
+      return
+
+    new_license = self.groom_license(ftype, legalese,
+                                     self.atat.postparsed_content())
+
+    #self.out.start_color('debug')
+    self.debug(f"{fname} groomed license =\n" + ''.join(new_license) + \
+               Legalese.EOL_MARK)
+
+    # check if licenses are equivalent
+    if self.equiv_licenses(new_license, legalese.license) and \
+                  not self.kwargs['force']:
+      self.status('Not required', fname)
+      self.stats.not_req += 1
+      return
+
+    self.stats.required += 1
+
+    # no update
+    if not self.kwargs['update']:
+      self.status('Required', fname)
+      return
+
+    tmpfile = self.copy_update_to_tmp(fname, legalese, new_license)
+
+    if not tmpfile:
+      self.stats.failed += 1
+      return
+
+    if self.kwargs['save_orig']:
+      savefile = fname + '.orig'
+      try:
+        shutil.move(fname, savefile)
+      except OSError as e:
+        self.out.ioerror(e.strerror, filename=e.filename, line_num=e.line_num)
+        self.stats.failed += 1
+        return
+
+    try:
+      shutil.move(tmpfile, fname)
+    except OSError as e:
+      self.out.ioerror(e.strerror, filename=e.filename, line_num=e.line_num)
+      self.stats.failed += 1
+      return
+
+    self.status('Updated', fname)
+    self.stats.updated += 1
+ 
+  def run_on_file(self):
+    """ Run update on file. """
+    self.status("Scanning...\n")
+
+    fname = self.kwargs['target']
+
+    if not os.path.exists(fname):
+      self.out.ioerror("Does not exist.", filename=fname)
+      self.stats.failed += 1
+      return
+
+    ftype = self.classify_file_type(fname)
+    if ftype:
+      self.stats.total += 1
+      self.update_legal(fname, ftype)
+
+  def run_on_directory(self):
+    """ Run updates recursively on directory. """
+    self.status("Scanning...\n")
+
+    for root, dirlist, filelist in os.walk(self.kwargs['target']):
+      for pat in Pat_excludes:
+        for dirname in dirlist:
+          if fnmatch.fnmatch(dirname, pat):
+            dirlist.remove(dirname)
+            break
+
+      for fname in filelist:
+        ftype = self.classify_file_type(fname)
+        if ftype:
+          fpath = root + os.path.sep + fname
+          self.stats.total += 1
+          self.update_legal(fpath, ftype)
+
+  def run(self):
+    """ Run updates. """
+    self.show_banner()
+
+    self.stats.clear()
+
+    self.template = self.find_template()
+
+    self.debug(f"template = {self.template}")
+
+    self.load_template()
+
+    self.atat.parse()
+
+    if os.path.isdir(self.kwargs['target']):
+      self.run_on_directory()
+    else:
+      self.run_on_file()
+
+    self.final_status()
+
+    return 0
+
+  def show(self):
+    """ Show what and such. """
+    from rnmake.atat import AtAtPrettyPrint
+    pretty = AtAtPrettyPrint(self.atat)
+
+    # pass 1: template not required
+    pass2 = []
+    for what in self.kwargs['show']:
+      if what == 'bp':
+        self.show_boilerplates()
+        print()
+      elif what == 'def':
+        pretty.show_defined()
+        print()
+      else:
+        pass2.append(what)
+
+    if len(pass2) > 0 and not self.atat.is_template_loaded():
+        self.template = self.find_template()
+        self.load_template()
+
+    # pass 2: need (parsed) template
+    for what in pass2:
+      if what == 'ref':
+        pretty.show_referenced()
+      elif what == 'pre':
+        pretty.show_preparsed()
+      elif what == 'post':
+        pretty.show_postparsed()
+      print()
+    
+  def show_boilerplates(self):
+    bp = []
+    paths = self.template_search_paths()
+    for path in paths:
+      for entry in os.listdir(path):
+        if fnmatch.fnmatch(entry, '*.tpl'):
+          tpl = os.path.join(path, entry)
+          if os.path.isfile(tpl):
+            bp += [tpl]
+    self.out.info(f"    {self.out.ul('BoilerPlates')}")
+    for tpl in bp:
+      self.out.info(tpl)
+
+  def turn_off_color(self):
+    """ Disable color output. """
+    self.out.disable_color()
+
+  def show_banner(self):
+    """ Show major banner in verbose mode. """
+    if not self.kwargs['verbose']:
+      return
+    if os.path.isdir(self.kwargs['target']):
+      tgt = "Directory:"
+    else:
+      tgt = "File:     "
+    self.out.cprint('banner', f"\n{_BoldLine}")
+    self.out.cprint('banner', f"""\
+:: Template:  {self.template}
+:: {tgt} {self.kwargs['target']}
+:: Update:    {self.kwargs['update']}
+:: Force:     {self.kwargs['force']}""")
+    self.out.cprint('banner', f"{_BoldLine}\n")
+  
+  def fatal(self, ec, *emsgs, filename=None, line_num=0):
+    """
+    Show fatal message and exit.
+
+    Parameters:
+      ec        Exit code.
+      emsgs     Arguments to the message.
+      filename  Optional filename associated with I/O.
+      line_num  Option line number of filename.
+    """
+    self.out.iofatal(*emsgs, filename=filename, line_num=line_num)
+    sys.exit(ec)
+
+  def status(self, what, filename=None):
+    if not self.kwargs['verbose']:
+      return
+    elif filename:
+      self.out.info(f"{what+':':<13} {filename}")
+    else:
+      self.out.info(what)
+
+  def final_status(self):
+    if self.kwargs['verbose']:
+      self.out.info("\n  Summary")
+      self.out.info(self.stats)
+    else:
+      self.out.info(f"{self.stats.updated} updated")
+
+  def debug(self, what, *objs):
+    if self.kwargs['debug']:
+      self.out.debug(what, *objs)
+
+  def print_usage_error(self, *args):
+    """ Print error usage message. """
+    emsg = ': '.join([f"{a}" for a in args])
+    if emsg:
+      print(f"{self.argv0}: error: {emsg}")
+    else:
+      print(f"{self.argv0}: error")
+    print(f"Try '{self.argv0} --help' for more information.")
+
+  def print_help(self):
+    """ Print command-line help"""
+    tags = reLegalTagBegin.split('|')
+    legal_beg = ''
+    for t in tags:
+      legal_beg = legal_beg + ' ' + "{0:<15s}".format(t.replace('\\\\', '\\'))
+    tags = reLegalTagEnd.split('|')
+    legal_end = ''
+    for t in tags:
+      legal_end = legal_end + ' ' + "{0:<15s}".format(t.replace('\\\\', '\\'))
+
+    print(f"""\
+Usage: {self.argv0} [OPTIONS] [VAR=VAL [VAR=VAL...]] LICENSE [TARGET]
+       {self.argv0} --help
+
+Update source files with the legal blurb specified by the LICENSE template.
+
+Options:
+      --debug           Enable grotesque amount of debugging output.
+
+  -e, --exclude=EXDIR   Exclude directory EXDIR. May be iterated.
+
+  -f, --force           Force update, even if licenses match. Must be good.
+
+      --no-color        Disable color output.
+
+  -n, --no-update       Do a dry run. List files that need updating, but
+                        don't update.
+
+      --save-orig       Save original. Note that this option will leave many
+                        'hamster gifts' throughout the project.
+
+      --show=WHAT       Show WHAT to stdout. The show option disables any
+                        file updates. May be iterated. WHAT is one of:
+                          all   Show all WHATs.
+                          bp    Show available boilerplate licencse templates.
+                          def   Show defined atat variables.
+                          ref   Show atat variables referenced in template.
+                          pre   Show pre-parsed template contents.
+                          post  Show post-parsed template contents.
+
+      --verbose         Enable status and summary output.
+
+  -h, --help            Display this help and exit.
+
+Description:
+  LICENSE
+  The LICENSE either specifies a (absolute) template file or a tag, where
+  tag.tpl is the license template basename. If LICENSE is a tag, and not a file,
+  a search in the standard rnmake (install) locations is done to find the
+  boilerplate template file.
+
+  TARGET
+  If TARGET specifies a directory, then recursively update all source files
+  with the specified licence, starting from TARGET. If TARGET specifies a 
+  regular file, then only update that file.
+
+  If TARGET is not specified, the current working directory ('.') is used.
+  
+  VAR=VAL
+  The optional VAR=VAL arguments define name-value pairs to be used as working
+  atat @VAR@ variables for template processinog. The VAR name is case
+  insensitive. It is automatically converted to upper case. The value VAL is
+  simply copied, unmodified.
+
+  See '{self.argv0} --show ref' for referenced variables in template.
+
+  SOURCE
+  Supported source files are, as determined by file pattern:
+    c             .c .h
+    c++           .cxx .cpp .cc .C .hh .hpp
+    python        .py
+    java          .java
+    javascript    .js
+    swig          .i
+    shell         .sh .bash .zsh
+    make          Makefile makefile .mk
+    doxygen       .doxy .dox
+    html          .html .htm
+    xml           .xml
+
+  PARSING
+  All referenced atat variables in the template are replaced with the matched
+  working variable (generated) value(s). The contents of the processed template
+  are inserted, verbatim, between the legal tags within the source files. The
+  tags are usually located in the file header comment block. The inserted
+  license attempts to preserve the comment style. Valid tag pairs:
+  {legal_beg}
+  {legal_end}
+
+  UPDATE LOGIC:
+  Source files must contain valid license begin and end tags.
+  Source files must differ in license text or the --force option is specified.
+  The --show and --no-update options disable updates.
+""")
+
+  def get_options(self, argv):
+    """ Get main options and arguments. """
+    self.argv0 = os.path.basename(argv[0])
+
+    self.out.set_prefix(self.argv0)
+
+    # option defaults
+    kwargs = {}
+    kwargs['debug']     = False
+    kwargs['verbose']   = False
+    kwargs['color']     = True
+    kwargs['update']    = True
+    kwargs['force']     = False
+    kwargs['save_orig'] = False
+    kwargs['show']      = []
+    kwargs['target']    = '.'
+    kwargs['atat']      = {}
+
+    shortopts = "?hnfe:"
+    longopts  = ['help', 'show=', 'no-color', 'no-update', 'force', 'exclude=',
+                 'save-orig', 'debug', 'verbose']
+    show_args = ['bp', 'def', 'ref', 'pre', 'post']
+
+    # parse command-line options
+    try:
+      try:
+        opts, args = getopt.getopt(argv[1:], shortopts, longopts=longopts)
+      except getopt.error as msg:
+        raise UsageError(msg)
+      for opt, optarg in opts:
+        if opt in ('-h', '--help', '-?'):
+          self.print_help()
+          sys.exit(0)
+        if opt in ('--no-color'):
+          kwargs['color'] = False
+          self.turn_off_color()
+        elif opt in ('-n', '--no-update'):
+          kwargs['update'] = False
+        elif opt in ('-f', '--force'):
+          kwargs['force'] = True
+        elif opt in ('--save-orig'):
+          kwargs['save_orig'] = True
+        elif opt in ('-e', '--exclude'):
+          Pat_excludes.append(optarg)
+        elif opt in ('--show'):
+          if optarg == 'all':
+              kwargs['show'] = show_args
+          elif optarg in show_args and optarg not in kwargs['show']:
+            kwargs['show'] += [optarg]
+          else:
+            raise UsageError(f"'{optarg}': Unknown 'show' option argument.")
+        elif opt in ('--debug'):
+          kwargs['debug'] = True
+        elif opt in ('--verbose'):
+          kwargs['verbose'] = True
+    except UsageError as err:
+      self.print_usage_error(err.msg)
+      sys.exit(2)
+
+    # non-nvp arguments
+    nargs = []
+
+    # name=value pair regex
+    reNvp = re.compile('([a-zA-Z_]\w*)=(.*)')
+    
+    for arg in args:
+      g = reNvp.match(arg)
+      if g is not None and len(g.groups()) == 2:
+        kwargs['atat'][g[1].upper()] = g[2]
+      else:
+        nargs.append(arg)
+  
+    if len(nargs) < 1:
+      self.print_usage_error("No license specified.")
+      sys.exit(2)
+    else:
+      kwargs['license'] = nargs[0]
+
+    if len(nargs) > 1:
+      kwargs['target'] = nargs[1]
+
+    return kwargs
+
+  def main(self, argv):
+    """ main """
+    self.kwargs = self.get_options(argv)
+
+    self.debug('kwargs =', self.kwargs)
+
+    self.get_env()
+
+    self.set_atat_vars()
+
+    if self.kwargs['show']:
+      self.show()
+    else:
+      self.run()
+
+    return 0
+
+#------------------------------------------------------------------------------
+app = Application()
+sys.exit( app.main(sys.argv) )

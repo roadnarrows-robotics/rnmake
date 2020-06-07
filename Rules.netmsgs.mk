@@ -89,7 +89,7 @@ define xml2c
 endef
 
 .PHONY: netmsgs-all netmsgs-all-c netmsgs-all-py netmsgs-all-share
-netmsgs-all: netmsgs-all-c netmsgs-all-py netmsgs-all-share
+netmsgs-all: echo-netmsgs-all netmsgs-all-c netmsgs-all-py netmsgs-all-share
 
 netmsgs-all-c: 	$(NETMSGS_H_FILES)
 

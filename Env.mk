@@ -48,12 +48,11 @@ export _ENV_MK = 1
 
 # ------------------------------------------------------------------------------
 # RNMAKE_ARCH_TAG
-#   What:                 Determines which architecture makefile to include.
-#                         Arch.$(RNMAKE_ARCH_TAG).mk
-#   Environment variable: RNMAKE_ARCH_DFT
-#   Make override:        make arch=<arch> ...
-#   Default:              x86_64
-#   Required:             no
+#   Determines which architecture to make. The architecture is
+#   defined in Arch.$(RNMAKE_ARCH_TAG).mk (included by Rules.mk).
+#
+#   Make override:    make arch=<arch> ...
+#   Fallback default: x86_64
 # ------------------------------------------------------------------------------
 
 # 'make arch=<arch> ...' or RNMAKE_ARCH_DFT
@@ -74,13 +73,11 @@ undefine _arch
 
 # ------------------------------------------------------------------------------
 # RNMAKE_INSTALL_XPREFIX
-#   What:                 Cross-install prefix.
-#                         Actual packages are installed to
-#                           $(RNMAKE_INSTALL_XPREFIX)/$(RNMAKE_ARCH)/
-#   Environment variable: RNMAKE_INSTALL_XPREFIX
-#   Make override:        make xprefix=<path> ...
-#   Default:              $(HOME)/xinstall
-#   Required:             no
+#   Cross-install prefix. Actual packages are installed to:
+#   $(RNMAKE_INSTALL_XPREFIX)/$(RNMAKE_ARCH)/
+#
+#   Make override:    make xprefix=<path> ...
+#   Fallback default: $(HOME)/xinstall
 # ------------------------------------------------------------------------------
 
 # 'make xprefix=<path> ...' or RNMAKE_INSTALL_XPREFIX
@@ -102,13 +99,11 @@ undefine _xprefix
 
 # ------------------------------------------------------------------------------
 # RNMAKE_INSTALL_PREFIX
-#   What:                 Install prefix. Overrides RNMAKE_INSTALL_XPREFIX.
-#                         Packages are installed to:
-#                           $(RNMAKE_INSTALL_PREFIX)/
-#   Environment variable: RNMAKE_INSTALL_PREFIX
-#   Make override:        make prefix=<path> ...
-#   Default:              
-#   Required:             no
+#   Install prefix. Overrides RNMAKE_INSTALL_XPREFIX. Packages are installed to:
+#   $(RNMAKE_INSTALL_PREFIX)/
+#
+#   Make override:    make prefix=<path> ...
+#   Fallback default: $(RNMAKE_INSTALL_XPREFIX)
 # ------------------------------------------------------------------------------
 
 # 'make prefix=<path> ...' or RNMAKE_INSTALL_PREFIX

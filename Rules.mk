@@ -110,12 +110,11 @@ MSG_ROOT_ONLY := is a package root make target only
 # Include once.
 
 ifndef _ENV_MK
-  # include package-specific rnmake overrides environment make file
+  # include optional package-specific rnmake overrides environment make file
   -include $(RNMAKE_PKG_ROOT)/pkgcfg/env.mk
-  ifndef _ENV_MK
-    # default rnmake envirionment
-    include $(RNMAKE_ROOT)/Env.mk
-  endif
+
+  # rnmake environment
+  include $(RNMAKE_ROOT)/Env.mk
 endif
 
 #------------------------------------------------------------------------------

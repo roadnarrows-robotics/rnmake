@@ -635,6 +635,12 @@ class Application:
       shutil.rmtree(self.ws['src_dir'])
       del self.ws['src_dir']
 
+  """
+  def git_clone_rnmake(self):
+    """ test rather than clone """
+    shutil.copytree(RNMAKE_ROOT, self.ws['rnmake_dir'])
+  """
+
   def git_clone_rnmake(self):
     if not self.kwargs['clone']:
       return
@@ -646,8 +652,6 @@ class Application:
       self.out.error(' '.join(cmd), 'cloning rnmake failed')
     else:
       self.status("Done")
-    # test rather than clone
-    #shutil.copytree(RNMAKE_ROOT, self.ws['rnmake_dir'])
 
   def final_fixups(self):
     if 'src_dir' in self.ws:

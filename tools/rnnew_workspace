@@ -527,7 +527,7 @@ class Application:
 
     # copy full template tree
     self.status(f"Copying template tree {RN_TEMPLATE_WS}")
-    shutil.copytree(RN_TEMPLATE_WS, self.ws['root'], ignore=self.ignore)
+    shutil.copytree(RN_TEMPLATE_WS, self.ws['root'], ignore=self.ws_ignore)
 
     # copy external source files
     self.copy_src()
@@ -545,9 +545,12 @@ class Application:
     self.parse_ws_templates()
 
     # clone rnmake package
-    self.git_clone_rnmake()
+    if self.kwargs['test']:
+      self.pseudo_git_clone_rnmake()
+    else:
+      self.git_clone_rnmake()
 
-  def ignore(self, src, names):
+  def ws_ignore(self, src, names):
     """ Ignore set of source names. """
     ig = []
     for fname in names:
@@ -635,11 +638,19 @@ class Application:
       shutil.rmtree(self.ws['src_dir'])
       del self.ws['src_dir']
 
-  """
-  def git_clone_rnmake(self):
+  def pseudo_git_clone_rnmake(self):
     """ test rather than clone """
-    shutil.copytree(RNMAKE_ROOT, self.ws['rnmake_dir'])
-  """
+    shutil.copytree(RNMAKE_ROOT, self.ws['rnmake_dir'],
+        ignore=self.pseudo_ignore)
+
+  def pseudo_ignore(self, src, names):
+    dotgit = '.git'
+    if src == dotgit:
+      return names
+    elif dotgit in names:
+      return  [dotgit]
+    else:
+      return []
 
   def git_clone_rnmake(self):
     if not self.kwargs['clone']:
@@ -817,12 +828,13 @@ atat @VAR@ variables for template processing. The VAR name is case insensitive.
     kwargs['verbose']   = False
     kwargs['color']     = True
     kwargs['clone']     = True
+    kwargs['test']      = False
     kwargs['atat']      = {}
     kwargs['pkg_name']  = None
     kwargs['prefix']    = None
 
     shortopts = "?h"
-    longopts  = ['help', 'debug', 'have-rnmake', 'no-color', 'verbose']
+    longopts  = ['help', 'debug', 'have-rnmake', 'no-color', 'test', 'verbose']
 
     # parse command-line options
     try:
@@ -843,6 +855,8 @@ atat @VAR@ variables for template processing. The VAR name is case insensitive.
           kwargs['debug'] = True
         elif opt in ('--verbose'):
           kwargs['verbose'] = True
+        elif opt in ('--test'):
+          kwargs['test'] = True
     except UsageError as err:
       self.print_usage_error(err.msg)
       sys.exit(2)

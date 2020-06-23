@@ -11,3 +11,5 @@
 */obj/
 */wrap/
 *.egg-info
+*.done
+version.h

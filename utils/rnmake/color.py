@@ -50,36 +50,46 @@ class ColorfulOutput(dict):
   NO_COLOR = ''
 
   def __init__(self, prefix=''):
-    self._prefix = str(prefix)
-    self._bu = {}
-    self._coloring = True
+    """
+    Initializer.
+
+    Parameters:
+      prefix    Notifier string prefix.
+    """
+    self._prefix      = str(prefix)
+    self._bu          = {}
+    self._color_avail = False
+    self._coloring    = False
     self.termcolors()
     self.default_synonyms()
 
   def termcolors(self):
     """ Fixed color escape sequences based on terminal type. """
-    term = os.getenv('TERM')
+    term = os.environ.get('TERM')
     if term in ('linux', 'screen', 'screen-256color',
                 'screen-bce', 'screen.xterm-256color'):
-      #'\001\033[{}m\002'
       fmt = f"{ColorfulOutput.SCREEN_COLOR_PRE}"\
             f"{ColorfulOutput.ANSI_COLOR_PRE}"\
             "{}"\
             f"{ColorfulOutput.ANSI_COLOR_POST}"\
             f"{ColorfulOutput.SCREEN_COLOR_POST}"
       self.update(dict([(k, fmt.format(v)) for k,v in self.COLOR_TEMPLATES]))
+      self._color_avail = True
       self._coloring = True
-    elif os.environ.get('TERM') in ('xterm', 'xterm-color', 'xterm-256color'):
-      # '\033[{}m'
+    elif term in ('xterm', 'xterm-color', 'xterm-256color'):
       fmt = f"{ColorfulOutput.ANSI_COLOR_PRE}"\
             "{}"\
             f"{ColorfulOutput.ANSI_COLOR_POST}"
       self.update(dict([(k, fmt.format(v)) for k,v in self.COLOR_TEMPLATES]))
+      self._color_avail = True
       self._coloring = True
     else:
       self.update(dict([(k, NO_COLOR) for k,v in self.COLOR_TEMPLATES]))
+      self._color_avail = False
+      self._coloring = False
     
   def default_synonyms(self):
+    """ Set default color synonyms. """
     self.synonym('darkgray',    'debug') 
     self.synonym('green',       'info') 
     self.synonym('brown',       'warn')
@@ -92,24 +102,37 @@ class ColorfulOutput(dict):
     self.synonym('lightblue',   'sep')
 
   def enable_color(self):
-    if not self._coloring:
+    """ Enable color output if available. """
+    if self._color_avail and not self._coloring:
       self.update(self._bu)
       self._bu.clear()
       self._coloring = True
 
   def disable_color(self):
+    """ Disable color output. """
     if self._coloring:
       self._bu.update(self)
       for k in list(self):
         self[k] = ColorfulOutput.NO_COLOR
       self._coloring = False
 
+  def is_color_available(self):
+    """ Returns True if terminal supports color, False otherwise. """
+    return self._color_avail
+
   def is_coloring(self):
+    """ Returns True if color output enabled, False otherwise. """
     return self._coloring
 
   def synonym(self, color, syn):
-    if self.is_coloring():
-      self[syn] = self[color]
+    """
+    Set a synonum of a name of a color.
+
+    Parameters:
+      color   Color name.
+      syn     New synonym.
+    """
+    self[syn] = self[color]
 
   def set_prefix(self, prefix):
     self._prefix = str(prefix)
@@ -145,7 +168,7 @@ class ColorfulOutput(dict):
     Parameters:
       *args     Iterable warning message arguments.
       filename  Optional filename associated with I/O.
-      line_num  Option line number of filename.
+      line_num  Optional line number of filename.
     """
     self._ioprint('warn', 'Warning', filename, line_num, *args)
 
@@ -156,7 +179,7 @@ class ColorfulOutput(dict):
     Parameters:
       *args     Iterable warning message arguments.
       filename  Optional filename associated with I/O.
-      line_num  Option line number of filename.
+      line_num  Optional line number of filename.
     """
     self._ioprint('error', 'Error', filename, line_num, *args)
 
@@ -167,7 +190,7 @@ class ColorfulOutput(dict):
     Parameters:
       *args     Iterable warning message arguments.
       filename  Optional filename associated with I/O.
-      line_num  Option line number of filename.
+      line_num  Optional line number of filename.
     """
     self._ioprint('fatal', 'Fatal', filename, line_num, *args)
 

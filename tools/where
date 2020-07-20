@@ -1,0 +1,287 @@
+#!/bin/bash
+#
+# File:
+#   where
+#
+# Usage:
+#   where [OPTION]... [PATTERN]...
+#   where --help
+#
+# Description:
+#   Where object(s) are found in search path.
+
+argv0=$(basename $0)
+
+# ansi colors
+color_pre="\033["
+color_post="\033[0m"
+color_norm="0m"
+color_red="0;31m"
+color_green="0;32m"
+color_yellow="0;33m"
+color_blue="0;34m"
+color_cyan="0;36m"
+color_gray="1;30m"
+color_light_red="1;31m"
+color_light_green="1;32m"
+color_light_blue="1;34m"
+color_light_cyan="1;36m"
+
+# colors used
+color_ftype_dir="${color_pre}${color_light_blue}"
+color_ftype_exe="${color_pre}${color_light_green}"
+color_ftype_link="${color_pre}${color_light_cyan}"
+color_ftype_reg="${color_pre}${color_norm}"
+color_ftype_other="${color_pre}${color_yellow}"
+color_error="${color_pre}${color_red}"
+color_fatal="${color_pre}${color_light_red}"
+color_path="${color_pre}${color_cyan}"
+color_end=${color_post}
+
+# turnOffColor
+turnOffColor()
+{
+  color_ftype_dir=
+  color_ftype_exe=
+  color_ftype_link=
+  color_ftype_reg=
+  color_error=
+  color_fatal=
+  color_path=
+  color_end=
+}
+
+# fatal exitcode emsg
+fatal()
+{
+  printf "${argv0}: ${color_fatal}${2}${color_end}\n" >&2
+  exit ${1}
+}
+
+# callHelp
+callHelp()
+{
+  cat <<EOH
+Usage: ${argv0} [OPTION]... [PATTERN]...
+       ${argv0} --help
+
+Where are the files(s) found in a search path.
+
+Options:
+  --no-color        Disable color output. Default: colors are enabled.
+
+  --color-key       Show file color key. Colors should be enabled for any
+                    meaningful output.
+
+  --show-path       Show search path components.
+
+  --bin             Search \$PATH for PATTERN executables. Default.
+
+  --lib             Search \$LD_LIBRARY_PATH for lib[PATTERN]*.so*
+                    and lib[PATTERN]*.a libraries.
+
+  --python          Search \$PYTHONPATH for PATTERN dot separated python
+                    modules.
+
+  --java            Search \$CLASSPATH for PATTERN dot separated java modules.
+
+  -s, --search=PATH Search a colon separated search PATH for PATTERN files.
+
+  --help            Print this help and exit.
+
+The ${argv0} command searches a colon separated search path for the target shell
+file PATTERN files. Each file matching the PATTERNs is listed on a separate
+line, color coded by file type.
+
+BINARIES (--bin)
+The \$PATH varibale is searched to find executables. Default.
+
+Example: where vim* gvim*
+
+LIBRARIES (--lib)
+The \$LD_LIBRARY_PATH varibale is searched to find shared and static libraries.
+Library locations defined by the dynamic linker configuration is not searched
+(see ldconfig).
+
+Example: where --lib cuda* cublas
+
+PYTHON (--python)
+The \$PYTHONPATH varibale is searched to find the python modules. The built-in
+sys.path components are not searched.
+
+Example: where --python mypkg.core.melt*
+
+JAVA (--java)
+The \$CLASSPATH varibale is searched to find the java modules. The built-in
+java locatations are not searched.
+
+Example: where --java urjava.sucks.abig*
+
+SEARCH (--search=PATH)
+The PATH is searched to find files/directories matching PATTERNs.
+
+Example: where --search=\${ROS_PACKAGE_PATH} tf2*
+EOH
+  exit 0;
+}
+
+# long and short options
+longopts="no-color,color-key,show-path,bin,lib,python,java,search:,help"
+shortopts="s:"
+
+# get the command-line options
+#   order returned: OPTIONS -- ARGS OTHER_OPTIONS
+OPTS=$(getopt --name ${argv0} -o "${shortopts}" --long "${longopts}" -- "${@}")
+
+if [ $? != 0 ]
+then
+  fatal 2 "Try '${argv0} --help' for more information."
+fi
+
+#echo "DBG: getopt return: ${OPTS}"
+
+eval set -- "${OPTS}"
+
+# if output is not a terminal, turn off color
+#if [ ! -t 1 ]
+#then
+#  turnOffColor
+#fi
+
+show_path='n'
+show_color_key='n'
+path_name='PATH'
+path=${PATH}
+
+# process command-line options
+while true
+do
+  case "$1" in
+    --no-color) turnOffColor; shift;;
+    --color-key) show_color_key='y'; shift;;
+    --show-path) show_path='y'; shift;;
+    --bin) path_name='PATH'; path=${PATH}; shift;;
+    --lib) path_name='LD_LIBRARY_PATH'; path=${LD_LIBRARY_PATH}; shift;;
+    --python) path_name='PYTHONPATH'; path=${PYTHONPATH}; shift;;
+    --java) path_name='CLASSPATH'; path=${CLASSPATH}; shift;;
+    -s|--search) path_name="search"; path="${2}"; shift 2;;
+    --help) callHelp; shift;;
+    --) shift; break;;
+    *)  break;;
+  esac
+done
+
+#echo "DBG: post opts: ${@}"
+
+declare -a filelist
+
+# expand_files path filepat
+expand_files()
+{
+  for f in ${1}/${2}
+  do
+    if [ -a "${f}" ] 
+    then
+      filelist[${#filelist[@]}]="${f}"
+    fi
+  done
+}
+
+# expand_libs path libpat
+expand_libs()
+{
+  for f in ${1}/lib${2}*.so.* ${1}/lib${2}*.so ${1}/lib${2}*.a
+  do
+    if [ -a "${f}" ] 
+    then
+      filelist[${#filelist[@]}]="${f}"
+    fi
+  done
+}
+
+# expand_pymods path dotmods
+expand_pymods()
+{
+  pat=${2//./\/}.py
+  expand_files ${1} ${pat}
+}
+
+# expand_jmods path dotmods
+expand_jmods()
+{
+  pat=${2//./\/}.class
+  expand_files ${1} ${pat}
+}
+
+# expand_where path objpat
+expand_where()
+{
+  unset filelist
+  case ${path_name} in
+    PATH) expand_files "${1}" "${2}";;
+    LD_LIBRARY_PATH) expand_libs "${1}" "${2}";;
+    PYTHONPATH) expand_pymods "${1}" "${2}";;
+    CLASSPATH) expand_jmods "${1}" "${2}";;
+    *) expand_files "${1}" "${2}";;
+  esac
+}
+
+show_where()
+{
+  if [[ -h "${1}" ]]
+  then
+    color="${color_ftype_link}"
+  elif [[ -d "${1}" ]]
+  then
+    color="${color_ftype_dir}"
+  elif [[ -x "${1}" ]]
+  then
+    color="${color_ftype_exe}"
+  elif [[ -f "${1}" ]]
+  then
+    color="${color_ftype_reg}"
+  else
+    color="${color_ftype_other}"
+  fi
+  printf "${color}${1}${color_end}\n"
+}
+
+IFS=":"
+
+if [ ${show_path} = 'y' ]
+then
+  #printf "  ${color_norm}${path_name}${color_end} =\n"
+  printf "  ${path_name} =\n"
+  for pathcomp in ${path}
+  do
+    printf "${color_path}${pathcomp}${color_end}\n"
+  done
+fi
+
+if [ ${show_color_key} = 'y' ]
+then
+  printf "  Color Key:\n"
+  printf "${color_ftype_link}symbolic_link${color_end}\n"
+  printf "${color_ftype_dir}directory${color_end}\n"
+  printf "${color_ftype_exe}executable${color_end}\n"
+  printf "${color_ftype_reg}regular_file${color_end}\n"
+  printf "${color_ftype_other}other${color_end}\n"
+fi
+
+while [ -n "${1}" ]
+do
+  #echo "DBG: obj: ${1}"
+  for pathcomp in ${path}
+  do
+    #echo "DBG: dir: ${pathcomp}"
+    expand_where "${pathcomp}" "${1}"
+    #echo "DBG: exp: ${filelist}"
+    for fullname in ${filelist[@]}
+    do
+      show_where "${fullname}"
+    done
+  done
+  shift
+done
+
+exit 0

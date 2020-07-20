@@ -24,5 +24,9 @@ Update source files with the legal blurb specified by the LICENSE template.
 ## sgrep
 Greps source files in [current] directory for PATTERN.
 
-Note: I copy this heavily used tool to a location specified by PATH.
+## where
+Find where files are in a search path.
+
+## Notes
+I copy the heavily used sgrep and where tools to my $HOME/bin/.
 

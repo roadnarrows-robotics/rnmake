@@ -285,8 +285,7 @@ define printDirBanner =
 	printf "$(color_dir_banner)$(normline)\n";\
 	printf "Directory: $$subdirname\n";\
 	printf "Goal:      $$goal\n";\
-	printf "$(normline)$(color_end)\n";\
-	fi
+	printf "$(normline)$(color_end)\n";
 endef
 
 # $(call printGoal,goal)

@@ -724,7 +724,7 @@ namespace clan
 
   bool Grammar::load(const std::string lang, StrVec &symbols, StrVec &rules)
   {
-    pimpl->load(lang, symbols, rules);
+    return pimpl->load(lang, symbols, rules);
   }
 
   bool Grammar::parse_symbols(const StrVec &symbols)

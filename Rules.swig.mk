@@ -73,8 +73,10 @@ PYTHON_VER = $(shell $(PYTHON) --version 2>&1 | sed -e 's/Python\s\+\([0-9]\+\.[
 
 ifeq "$(RNMAKE_ARCH)" "cygwin"
 SWIG_PYLIB = -lpython$(PYTHON_VER).dll
-else
+else ifeq "$(PYTHON_VER)" "3.6"
 SWIG_PYLIB = -lpython$(PYTHON_VER)m
+else
+SWIG_PYLIB = -lpython$(PYTHON_VER)
 endif
 
 ifndef "$(SWIG_INCLUDES)"

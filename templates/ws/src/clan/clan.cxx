@@ -274,9 +274,9 @@ static int run_sim(args_t &args)
     std::cout << "As we part ways. let's take a final peek." << std::endl;
 
     list_clan_activities();
-
-    return 0;
   }
+
+  return 0;
 }
 
 /*!

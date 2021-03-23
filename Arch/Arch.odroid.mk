@@ -87,7 +87,7 @@ RNMAKE_MAKEDEPS	= $(CC) $(CFLAGS_DEPS_ONLY)
 #------------------------------------------------------------------------------
 CXX                 = g++
 CXXFLAGS_CODEGEN		= -fPIC
-CXXFLAGS_STD				= -std=c++11
+CXXFLAGS_STD				= -std=c++17
 CXXFLAGS_DEBUG      = -g
 CXXFLAGS_OPTIMIZE   = -O2
 CXXFLAGS_CPP_ONLY   = -E

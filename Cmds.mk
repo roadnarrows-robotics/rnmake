@@ -86,8 +86,8 @@ UNZIP						= unzip -u -o
 XARGS						= xargs
 
 # Interpreters
+PYTHON       ?= /usr/bin/python3
 PERL          = /usr/bin/perl
-PYTHON        = /usr/bin/python3
 
 # LEX and YACC
 LEX           = flex

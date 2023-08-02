@@ -61,7 +61,7 @@ gawk "
   /\.o/               { next }
   /\.out/             { next }
   /\.log/             { next }
-  /\__pycache__/      { next }
+  /\/__pycache__/       { next }
   /\.pyc/             { next }
   /\.pyo/             { next }
   /\.done/            { next }
